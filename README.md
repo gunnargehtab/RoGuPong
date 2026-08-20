@@ -61,12 +61,19 @@ Cameras will not work over plain `http://` on a phone, so use the
 ### Getting connected
 
 1. Both phones open the page and tap **Play**.
-2. One taps **Host a match** and shows the code on screen.
-3. The other taps **Join a match** and points the camera at it.
+2. One taps **Host a match** and shows the invite on screen.
+3. The other scans it — **on Android** tap *Join a match* in the game, **on an
+   iPhone** just open the Camera app, point it at the invite and tap the banner.
 4. The joiner's phone shows a reply code; the host scans that back.
 
 Two scans and you are in the lobby. If either phone has no camera, every step
 also gives you the code as text — send it over any chat app and paste it in.
+
+> **If one of you is on an iPhone, let the Android phone host.** No browser on
+> iOS gives a web page access to a QR scanner, so the invite is encoded as a
+> link and read by the phone's own Camera app instead — which only helps in the
+> joining direction. An iPhone can still host, it just has to take the reply
+> code by paste rather than by scanning.
 
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but

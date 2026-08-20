@@ -5,6 +5,8 @@
 // the UI falls back to pasting the code, which is why every failure here is
 // reported rather than thrown into the void.
 
+import { extractCode } from './sdp.js';
+
 const CODE_RE = /^RG[PX][A-Z2-7]+$/;
 
 export function scannerSupported() {
@@ -49,7 +51,8 @@ export class Scanner {
       try {
         const found = await this.detector.detect(videoEl);
         for (const b of found) {
-          const value = String(b.rawValue || '').trim().toUpperCase().replace(/\s/g, '');
+          // The invite is a link now, so unwrap it before matching.
+          const value = extractCode(b.rawValue || '');
           if (CODE_RE.test(value)) {
             this.stop();
             onCode(value);

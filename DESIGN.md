@@ -181,6 +181,36 @@ STUN servers are configured but unused on a shared WiFi, where local candidates
 win immediately. ICE gathering is capped at three seconds so a network with no
 internet behind it never stalls the handshake.
 
+### iPhones
+
+No browser on iOS can scan a QR code. The Barcode Detection API is Chromium's,
+and on iOS every browser is Safari underneath, so an iPhone could display the
+invite but never read one.
+
+iOS *has* read QR codes since iOS 11 — in the Camera app, not the browser — but
+it only offers a tappable action when the code contains a URL. So the invite is
+encoded as one: `https://…/RoGuPong/#j=<code>`. The iPhone points its own camera
+at the host's screen, taps the banner, and the game opens with the code in the
+fragment and joins itself. Any scanner app works, not just ours, and there is no
+camera permission prompt inside the page.
+
+The cost is a denser symbol — the URL prefix adds 43 characters and forces byte
+mode instead of alphanumeric, taking the invite from 37x37 modules to 49x49,
+which is still comfortable at arm's length. The reply code stays bare: it is
+only ever read by the scanner inside the game, and making it a link would
+navigate the host away from its own live connection.
+
+Two consequences follow. Opening an invite while the game is already running
+changes only the fragment, so the page listens for `hashchange` as well as
+checking on startup. And because only the joining direction is solved, an
+iPhone should be the one that joins — it can host, but takes the reply by paste.
+
+Decoding QR in JavaScript would have covered every combination including two
+iPhones. It was started and then deliberately dropped: roughly seven hundred
+lines of binarizer, perspective sampling and Reed-Solomon error correction, to
+give an iPhone a *worse* scanning experience than the camera it already has, for
+a pairing neither of the two players in this game has.
+
 ---
 
 ## 7. Presentation

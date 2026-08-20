@@ -9,6 +9,7 @@ import { drawText, measure } from '../ui/pixelfont.js';
 import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R } from './match.js';
 
 const COURT_ASPECT = 0.56;      // width / height
+const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
 const HUD_TOP = 0.105;          // fraction of canvas height
 const HUD_BOTTOM = 0.155;
 
@@ -71,6 +72,11 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.trails = new Map();
     this.scanlines = null;
+    // 'high' draws the full 16-bit treatment. 'low' drops everything that costs
+    // a lot of fill rate for a little polish — canvas shadows above all, which
+    // are the single most expensive thing an older phone GPU can be asked to do
+    // here — and keeps the game itself pixel-identical.
+    this.quality = 'high';
     this.dpr = 1;
     this.W = 0;
     this.H = 0;
@@ -78,8 +84,23 @@ export class Renderer {
     this.resize();
   }
 
+  setQuality(quality) {
+    const next = quality === 'low' ? 'low' : 'high';
+    if (next === this.quality) return;
+    this.quality = next;
+    this.resize();
+  }
+
+  /** Canvas shadows are the expensive one; everything else is bookkeeping. */
+  glow(colour, blur) {
+    if (this.quality === 'low') return;
+    this.ctx.shadowColor = colour;
+    this.ctx.shadowBlur = blur;
+  }
+
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const cap = this.quality === 'low' ? 1.5 : 2;
+    const dpr = Math.min(window.devicePixelRatio || 1, cap);
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
     this.dpr = dpr;
@@ -91,6 +112,8 @@ export class Renderer {
     this.ctx.imageSmoothingEnabled = false;
     this.scanlines = null;
     this.vignette = null;
+    this.skyGradient = null;
+    this.skyGradientFor = null;
     this.layout();
   }
 
@@ -164,16 +187,24 @@ export class Renderer {
 
   drawBackdrop(stage, time, shake) {
     const ctx = this.ctx;
-    const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, stage.sky[0]);
-    g.addColorStop(0.55, stage.sky[1]);
-    g.addColorStop(1, stage.sky[2]);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.W, this.H);
+    if (!this.skyGradient || this.skyGradientFor !== stage.id) {
+      const g = ctx.createLinearGradient(0, 0, 0, this.H);
+      g.addColorStop(0, stage.sky[0]);
+      g.addColorStop(0.55, stage.sky[1]);
+      g.addColorStop(1, stage.sky[2]);
+      this.skyGradient = g;
+      this.skyGradientFor = stage.id;
+    }
+    ctx.fillStyle = this.skyGradient;
+    // Overdraw the edges: screen shake translates the canvas, and a backdrop
+    // that stopped at the old bounds would leave the previous frame showing in
+    // the gap.
+    ctx.fillRect(-SHAKE_MARGIN, -SHAKE_MARGIN, this.W + SHAKE_MARGIN * 2, this.H + SHAKE_MARGIN * 2);
 
     if (stage.stars) {
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      for (let i = 0; i < stage.stars; i++) {
+      const count = this.quality === 'low' ? Math.min(stage.stars, 20) : stage.stars;
+      for (let i = 0; i < count; i++) {
         const x = ((i * 97) % 100) / 100 * this.W;
         const y = ((i * 53) % 60) / 100 * this.H * 0.9;
         const tw = 0.5 + 0.5 * Math.sin(time * 2 + i);
@@ -194,7 +225,8 @@ export class Renderer {
       ctx.fillRect(0, wy, this.W, this.H - wy);
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = stage.water.shimmer;
-      for (let i = 0; i < 26; i++) {
+      const shimmer = this.quality === 'low' ? 8 : 26;
+      for (let i = 0; i < shimmer; i++) {
         const y = wy + ((i * 37) % 100) / 100 * (this.H - wy);
         const w = 12 + ((i * 17) % 40);
         const x = ((i * 83) % 100) / 100 * this.W + Math.sin(time * 1.6 + i) * 10;
@@ -224,6 +256,7 @@ export class Renderer {
       }
     }
     // A few lit windows.
+    if (this.quality === 'low') return;
     ctx.fillStyle = 'rgba(255,220,140,0.20)';
     for (let i = 0; i < 40; i++) {
       const s = layer.shapes[i % layer.shapes.length];
@@ -241,8 +274,7 @@ export class Renderer {
     const c = this.court;
 
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
-    ctx.shadowBlur = 24;
+    this.glow('rgba(0,0,0,0.6)', 24);
     ctx.fillStyle = stage.court;
     roundRect(ctx, c.x, c.y, c.w, c.h, 10);
     ctx.fill();
@@ -330,8 +362,7 @@ export class Renderer {
       ctx.strokeStyle = c.item.color;
       roundRect(ctx, -r, -r, r * 2, r * 2, r * 0.28);
       ctx.stroke();
-      ctx.shadowColor = c.item.color;
-      ctx.shadowBlur = 14;
+      this.glow(c.item.color, 14);
       drawText(ctx, c.item.glyph, 0, 0, {
         scale: Math.max(2, r / 4), color: c.item.color, align: 'center', baseline: 'middle',
       });
@@ -349,7 +380,8 @@ export class Renderer {
       let trail = this.trails.get(b.id);
       if (!trail) { trail = []; this.trails.set(b.id, trail); }
       trail.push([b.x, b.y]);
-      if (trail.length > 14) trail.shift();
+      const maxTrail = this.quality === 'low' ? 7 : 14;
+      while (trail.length > maxTrail) trail.shift();
 
       const hot = b.fire > 0;
       const tint = hot ? '#ff9b4a' : '#ffffff';
@@ -366,8 +398,7 @@ export class Renderer {
 
       const [sx, sy] = this.pt(b.x, b.y, flip);
       ctx.save();
-      ctx.shadowColor = hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)';
-      ctx.shadowBlur = hot ? 26 : 14;
+      this.glow(hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
       ctx.fillStyle = hot ? '#ffd166' : '#ffffff';
       ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
       ctx.fillStyle = hot ? '#fff3c4' : '#ffffff';
@@ -390,8 +421,7 @@ export class Renderer {
       const ch = chars[i];
 
       ctx.save();
-      ctx.shadowColor = ch.color;
-      ctx.shadowBlur = p.pending ? 26 : 12;
+      this.glow(ch.color, p.pending ? 26 : 12);
       ctx.fillStyle = p.frost > 0 ? '#9df3ff' : ch.color;
       roundRect(ctx, sx - w / 2, sy - h / 2, w, h, h * 0.45);
       ctx.fill();
@@ -525,10 +555,7 @@ export class Renderer {
     const ready = m.meter[view] >= 1;
     ctx.save();
     ctx.globalAlpha = ready ? 1 : 0.45;
-    if (ready) {
-      ctx.shadowColor = chars[view].color2;
-      ctx.shadowBlur = 18 + Math.sin(time * 8) * 8;
-    }
+    if (ready) this.glow(chars[view].color2, 18 + Math.sin(time * 8) * 8);
     ctx.fillStyle = ready ? chars[view].color : 'rgba(255,255,255,0.10)';
     roundRect(ctx, btn.x, btn.y, btn.w, btn.h, btn.h * 0.32);
     ctx.fill();
@@ -560,10 +587,7 @@ export class Renderer {
     ctx.fill();
     const full = value >= 1;
     ctx.save();
-    if (full) {
-      ctx.shadowColor = char.color2;
-      ctx.shadowBlur = 10 + Math.sin(time * 9) * 6;
-    }
+    if (full) this.glow(char.color2, 10 + Math.sin(time * 9) * 6);
     const grad = ctx.createLinearGradient(x, 0, x + w, 0);
     grad.addColorStop(0, char.color);
     grad.addColorStop(1, char.color2);
@@ -649,6 +673,8 @@ export class Renderer {
       ctx.fillRect(0, 0, this.W, this.H);
       ctx.globalAlpha = 1;
     }
+
+    if (this.quality === 'low') return;
 
     if (!this.scanlines) {
       const off = document.createElement('canvas');

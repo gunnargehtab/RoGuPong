@@ -12,7 +12,7 @@ import { STAGES } from '../game/stages.js';
 import { ITEMS } from '../game/items.js';
 import { drawFighter } from '../game/render.js';
 import { drawQrToCanvas } from '../net/qr.js';
-import { prettyCode } from '../net/sdp.js';
+import { prettyCode, inviteLink } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 
@@ -144,7 +144,13 @@ export class Screens {
       <div class="row" style="margin-top:10px">
         <button class="btn small secondary" data-action="toggle-music">Music: ${this.profile.music ? 'on' : 'off'}</button>
         <button class="btn small secondary" data-action="toggle-sfx">Sfx: ${this.profile.sfx ? 'on' : 'off'}</button>
-      </div>`;
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small secondary" data-action="toggle-quality">
+          Graphics: ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
+      </div>
+      <small class="muted" style="display:block;margin-top:6px">
+        Fast drops the glows and scanlines. Older phones get a much smoother game.</small>`;
     wrap.appendChild(who);
 
     const input = who.querySelector('#pname');
@@ -292,8 +298,9 @@ export class Screens {
     const panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML = `
-      <p>Both phones need to be on the <b>same WiFi</b>. One hosts, the other joins —
-      it doesn't matter which.</p>
+      <p>Both phones need to be on the <b>same WiFi</b>. One hosts, the other joins.</p>
+      <p style="margin-top:8px"><small>If one of you is on an <b>iPhone</b>, let the
+      Android phone host — the iPhone can then join straight from its Camera app.</small></p>
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
         <button class="btn" data-action="host">Host a match</button>
         <button class="btn secondary" data-action="join">Join a match</button>
@@ -311,7 +318,7 @@ export class Screens {
   }
 
   /** Shared layout for both sides of the handshake. */
-  signalScreen({ title, step, steps, instruction, code, showCamera, actions, status }) {
+  signalScreen({ title, step, steps, instruction, code, showCamera, actions, status, asLink }) {
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel(title, { scale: 2 }));
@@ -340,9 +347,14 @@ export class Screens {
       box.className = 'qr-wrap';
       const canvas = document.createElement('canvas');
       const size = Math.min(this.root.clientWidth - 70, 320);
+      // The invite goes in as a link so any phone's built-in camera can open
+      // it; the reply stays a bare code, because it is only ever read by the
+      // scanner inside the game and following a link would navigate the host
+      // away from its own live connection.
+      const payload = asLink ? inviteLink(code) : code;
       let drawn = true;
       try {
-        drawQrToCanvas(canvas, code, size, { ecl: 'M' });
+        drawQrToCanvas(canvas, payload, size, { ecl: asLink ? 'L' : 'M' });
       } catch {
         drawn = false;
       }
@@ -352,7 +364,9 @@ export class Screens {
         canvas.style.width = size + 'px';
         canvas.style.height = size + 'px';
         box.appendChild(canvas);
-        hint.textContent = 'Point the other phone at this';
+        hint.textContent = asLink
+          ? 'Any camera app can read this — including the iPhone Camera'
+          : 'Point the other phone at this';
       } else {
         hint.textContent = 'This code is too long for a QR — send it with the button below.';
       }
@@ -416,8 +430,11 @@ export class Screens {
     return this.signalScreen({
       title: 'HOSTING',
       step: 0, steps: 3,
-      instruction: 'Show this to your friend and have them tap <b>Join</b>. They will show you a reply code to scan back.',
+      instruction: 'Show this to your friend. <b>On an iPhone</b> they just open the '
+        + 'Camera app, point it here and tap the banner. On Android they tap '
+        + '<b>Join</b> in the game. Either way they will show you a reply code to scan back.',
       code: data.code,
+      asLink: true,
       status: { text: 'Waiting for a reply', kind: 'warn', pulse: true },
       actions: `
         <button class="btn" data-action="host-scan">${scannerSupported() ? 'Scan their reply' : 'Enter their reply'}</button>

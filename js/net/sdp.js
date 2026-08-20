@@ -316,12 +316,37 @@ export async function packSignal(sdp, role) {
   return packFull(sdp, role);
 }
 
+/**
+ * Pull a signalling code out of whatever the user gave us: the bare code, a
+ * code with spaces in it, or the full invite link an iPhone's camera hands over.
+ */
+export function extractCode(input) {
+  const text = String(input).trim();
+  const fromLink = /[#?&]j=([A-Za-z2-7]+)/.exec(text);
+  const candidate = fromLink ? fromLink[1] : text;
+  return candidate.toUpperCase().replace(/[\s-]/g, '');
+}
+
 /** Turn a scanned/pasted code back into { role, sdp }. */
 export async function unpackSignal(code) {
-  const clean = String(code).trim().toUpperCase().replace(/[\s-]/g, '');
+  const clean = extractCode(code);
   if (clean.startsWith(TAG_COMPACT)) return unpackCompact(clean);
   if (clean.startsWith(TAG_FULL)) return unpackFull(clean);
   throw new Error("that doesn't look like a RoGuPong code");
+}
+
+/**
+ * The invite as a link.
+ *
+ * iOS has read QR codes in the Camera app since iOS 11, but only offers to open
+ * one when it contains a URL — and no browser on iOS exposes a QR API to the
+ * page. Encoding the invite as a link therefore turns "iPhones cannot join"
+ * into "point the Camera at it and tap the banner", using whatever scanner the
+ * phone already has. It costs a denser QR (37x37 to 49x49) and nothing else.
+ */
+export function inviteLink(code) {
+  const base = location.origin + location.pathname;
+  return base + '#j=' + code;
 }
 
 /** Group a code into 4-character blocks so a human can read it out loud. */
