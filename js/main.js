@@ -14,6 +14,7 @@ import { Match } from './game/match.js';
 import { byId as charById } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
 import { Peer } from './net/peer.js';
+import { extractCode } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 
@@ -73,11 +74,48 @@ class App {
       else audio.playMusic('menu');
     });
 
+    // Tapping an invite while the game is already open only changes the
+    // fragment — the page never reloads — so listen for that as well as
+    // checking on startup.
+    window.addEventListener('hashchange', () => this.consumeInviteLink());
+
     this.go('title');
     requestAnimationFrame((t) => this.frame(t));
+    this.consumeInviteLink();
   }
 
   get view() { return this.peer && !this.peer.isHost ? 1 : 0; }
+
+  /**
+   * Opened from a scanned invite? Join it straight away.
+   *
+   * This is how an iPhone gets in: iOS reads QR codes in the Camera app but
+   * gives no browser API for it, so the invite is a link and the phone's own
+   * camera does the scanning.
+   */
+  consumeInviteLink() {
+    const hash = location.hash || '';
+    if (!/[#?&]j=/.test(hash)) return;
+    const code = extractCode(hash);
+    // Clear it before connecting, so a reload does not try to rejoin a match
+    // that is long over.
+    history.replaceState(null, '', location.pathname + location.search);
+
+    if (!/^RG[PX][A-Z2-7]+$/.test(code)) {
+      this.screens.toast('That invite link looks damaged', 'bad');
+      return;
+    }
+    if (this.mode === 'match') {
+      this.screens.toast('Finish this match first', 'bad');
+      return;
+    }
+    // Opening a second invite from the menus is a deliberate act: drop
+    // whatever half-made connection is lying around and take the new one.
+    if (this.peer) this.leave(true);
+
+    this.screens.toast('Invite found — joining…');
+    this.beginJoin(code);
+  }
 
   saveProfile() {
     this.profile.char = this.myChar;
