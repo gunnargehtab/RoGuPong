@@ -37,11 +37,13 @@ Both phones need to be on the **same WiFi**, and the page needs to be served
 over **HTTPS** (or `localhost`) — browsers only give a page the camera on a
 secure origin.
 
-### Put it online
+### It is already online
 
-Any static host works. With GitHub Pages: **Settings → Pages → Deploy from a
-branch**, pick this branch and the root folder. A minute later the game is at
-`https://<you>.github.io/RoGuPong/`, and both phones just open that URL.
+**<https://gunnargehtab.github.io/RoGuPong/>** — open that on both phones.
+
+GitHub Pages serves it straight from `main` (Settings → Pages → Deploy from a
+branch), so every push to `main` republishes it. Any other static host works
+too; the game is just files.
 
 Load it once with internet and a service worker caches the whole game, so from
 then on it plays on a WiFi with no internet at all.
