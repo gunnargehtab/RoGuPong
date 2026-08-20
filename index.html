@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0616">
+<meta name="description" content="RoGuPong — a 16-bit pong duel for two phones on the same WiFi. No server, no accounts, no internet needed after the first load.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RoGuPong</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0616'/><rect x='2' y='12' width='6' height='2' fill='%23ff4d3d'/><rect x='8' y='2' width='6' height='2' fill='%233da5ff'/><rect x='7' y='7' width='2' height='2' fill='%23ffd93b'/></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="app"></div>
+<div id="emote-pop" aria-hidden="true"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<noscript>
+  <p style="padding:24px;color:#fff">RoGuPong needs JavaScript. It is the whole game.</p>
+</noscript>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@ const FONT = {
   'S': '0F10100E01011E', 'T': '1F040404040404', 'U': '1111111111110E',
   'V': '11111111110A04', 'W': '11111115151B11', 'X': '11110A040A1111',
   'Y': '11110A04040404', 'Z': '1F01020408101F',
-  '0': '0E11131519110E', '1': '040C040404040E', '2': '0E11010204081F',
+  '0': '0E11111111110E', '1': '040C040404040E', '2': '0E11010204081F',
   '3': '1F02040201110E', '4': '02060A121F0202', '5': '1F101E0101110E',
   '6': '0608101E11110E', '7': '1F010204080808', '8': '0E11110E11110E',
   '9': '0E11110F01020C',
@@ -67,6 +67,11 @@ export function drawText(ctx, text, x, y, opts = {}) {
   const {
     scale = 3, color = '#fff', align = 'left', baseline = 'top',
     shadow = null, outline = null, tracking = 1, alpha = 1,
+    // A full font-pixel outline swallows the counters of glyphs like 0, 8 and
+    // R, which at large sizes turns a score into an unreadable white brick.
+    // Keeping the outline thinner than one font pixel hugs the letterform
+    // instead of filling it in.
+    outlineWidth = Math.max(1, Math.round(scale * 0.4)),
   } = opts;
   const str = String(text).toUpperCase();
   const w = measure(str, scale, tracking);
@@ -106,7 +111,7 @@ export function drawText(ctx, text, x, y, opts = {}) {
 
   if (outline) {
     for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) if (dx || dy) stamp(dx * scale, dy * scale, outline);
+      for (let dx = -1; dx <= 1; dx++) if (dx || dy) stamp(dx * outlineWidth, dy * outlineWidth, outline);
     }
   }
   if (shadow) stamp(scale, scale, shadow);
