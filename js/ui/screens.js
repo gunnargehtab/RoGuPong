@@ -144,7 +144,13 @@ export class Screens {
       <div class="row" style="margin-top:10px">
         <button class="btn small secondary" data-action="toggle-music">Music: ${this.profile.music ? 'on' : 'off'}</button>
         <button class="btn small secondary" data-action="toggle-sfx">Sfx: ${this.profile.sfx ? 'on' : 'off'}</button>
-      </div>`;
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small secondary" data-action="toggle-quality">
+          Graphics: ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
+      </div>
+      <small class="muted" style="display:block;margin-top:6px">
+        Fast drops the glows and scanlines. Older phones get a much smoother game.</small>`;
     wrap.appendChild(who);
 
     const input = who.querySelector('#pname');

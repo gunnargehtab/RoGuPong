@@ -33,9 +33,15 @@ export function loadProfile() {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
     const p = raw ? JSON.parse(raw) : null;
-    return { name: p?.name || '', char: p?.char || 'ro', music: p?.music !== false, sfx: p?.sfx !== false };
+    return {
+      name: p?.name || '',
+      char: p?.char || 'ro',
+      music: p?.music !== false,
+      sfx: p?.sfx !== false,
+      quality: p?.quality === 'low' ? 'low' : 'high',
+    };
   } catch {
-    return { name: '', char: 'ro', music: true, sfx: true };
+    return { name: '', char: 'ro', music: true, sfx: true, quality: 'high' };
   }
 }
 

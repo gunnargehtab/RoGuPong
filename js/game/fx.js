@@ -12,6 +12,19 @@ export class Fx {
     this.texts = [];
     this.flash = null;
     this.freeze = 0;
+    // Scales every burst. Dropped on phones that cannot afford the confetti;
+    // the events still read, there is just less of each one.
+    this.budget = 1;
+    this.maxParticles = 500;
+  }
+
+  setQuality(quality) {
+    const low = quality === 'low';
+    this.budget = low ? 0.4 : 1;
+    this.maxParticles = low ? 130 : 500;
+    if (this.particles.length > this.maxParticles) {
+      this.particles.length = this.maxParticles;
+    }
   }
 
   clear() {
@@ -27,7 +40,8 @@ export class Fx {
       count = 12, color = '#ffffff', color2 = null, speed = 0.55, spread = TAU,
       dir = 0, life = 0.45, gravity = 0.35, size = 0.008, squares = true,
     } = opts;
-    for (let i = 0; i < count; i++) {
+    const n = Math.max(3, Math.round(count * this.budget));
+    for (let i = 0; i < n; i++) {
       const a = dir + (Math.random() - 0.5) * spread;
       const s = speed * (0.35 + Math.random() * 0.9);
       this.particles.push({
@@ -88,7 +102,9 @@ export class Fx {
       this.flash.age += dt;
       if (this.flash.age >= this.flash.life) this.flash = null;
     }
-    if (this.particles.length > 500) this.particles.splice(0, this.particles.length - 500);
+    if (this.particles.length > this.maxParticles) {
+      this.particles.splice(0, this.particles.length - this.maxParticles);
+    }
   }
 }
 

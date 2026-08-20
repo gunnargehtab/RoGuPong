@@ -19,6 +19,11 @@ import * as lb from './data/leaderboard.js';
 
 const SNAPSHOT_HZ = 30;
 const INPUT_HZ = 30;
+// The simulation always advances in fixed slices. A phone that can only paint
+// 20 frames a second still gets a full second of game per second of wall clock;
+// it just gets fewer pictures of it.
+const FIXED_STEP = 1 / 60;
+const MAX_STEPS_PER_FRAME = 6;
 const HISTORY_SHARED = 80;      // how many past matches to hand the other phone
 
 class App {
@@ -46,13 +51,19 @@ class App {
     this.theirRematch = false;
     this.guestInput = { x: 0.5 };
     this.netAccum = 0;
+    this.simAccum = 0;
     this.predictX = 0.5;
     this.lastFrame = performance.now();
     this.menuTime = 0;
     this.wakeLock = null;
+    this.simAccum = 0;
+    this.fpsWindow = [];
+    this.slowFrames = 0;
 
     audio.setMusic(this.profile.music);
     audio.setSfx(this.profile.sfx);
+    this.renderer.setQuality(this.profile.quality);
+    this.fx.setQuality(this.profile.quality);
 
     window.addEventListener('resize', () => this.renderer.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 300));
@@ -87,14 +98,50 @@ class App {
   /* Frame loop                                                          */
 
   frame(now) {
-    const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
+    const dt = Math.min(0.25, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
     this.menuTime += dt;
+    this.sampleFrameRate(dt);
 
     if (this.mode === 'match' && this.match) this.stepMatch(dt);
     else this.stepMenu(dt);
 
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  /**
+   * Watch the real frame rate and drop the renderer to its cheap path if the
+   * phone cannot keep up. Sticky for the session and remembered afterwards, so
+   * an older handset settles once instead of oscillating between looks.
+   */
+  sampleFrameRate(dt) {
+    if (this.profile.quality === 'low' || dt <= 0) return;
+    this.fpsWindow.push(dt);
+    if (this.fpsWindow.length > 90) this.fpsWindow.shift();
+    if (this.fpsWindow.length < 60) return;
+    const mean = this.fpsWindow.reduce((a, b) => a + b, 0) / this.fpsWindow.length;
+    if (mean > 1 / 45) {
+      this.fpsWindow.length = 0;
+      this.slowFrames++;
+      // Two bad windows in a row, so a one-off hitch does not demote a phone
+      // that is actually fine.
+      if (this.slowFrames >= 2) this.setQuality('low', true);
+    } else {
+      this.slowFrames = 0;
+    }
+  }
+
+  setQuality(quality, automatic = false) {
+    if (this.profile.quality === quality) return;
+    this.profile.quality = quality;
+    lb.saveProfile(this.profile);
+    this.renderer.setQuality(quality);
+    this.fx.setQuality(quality);
+    this.fpsWindow.length = 0;
+    this.slowFrames = 0;
+    if (automatic && quality === 'low') {
+      this.screens.toast('Switched to fast graphics for a smoother game');
+    }
   }
 
   stepMenu(dt) {
@@ -111,7 +158,20 @@ class App {
     if (isHost) {
       m.setInput(0, { x: this.input.x, special: this.input.takeSpecial() });
       m.setInput(1, { x: this.guestInput.x });
-      m.step(dt);
+
+      // Fixed-step accumulator. Feeding a long frame straight into step() would
+      // have it clamped, quietly turning a slow phone into a slow-motion game.
+      this.simAccum += dt;
+      let steps = 0;
+      while (this.simAccum >= FIXED_STEP && steps < MAX_STEPS_PER_FRAME) {
+        m.step(FIXED_STEP);
+        this.simAccum -= FIXED_STEP;
+        steps++;
+      }
+      // Far enough behind that catching up would make things worse: drop the
+      // backlog rather than spiral.
+      if (steps === MAX_STEPS_PER_FRAME) this.simAccum = 0;
+
       this.netAccum += dt;
       if (this.peer && this.netAccum >= 1 / SNAPSHOT_HZ) {
         this.netAccum = 0;
@@ -190,6 +250,7 @@ class App {
     this.match = new Match({ chars, stage, target, seed });
     this.finishing = false;
     this.pendingResult = null;
+    this.simAccum = 0;
     this.predictX = 0.5;
     this.netAccum = 0;
     this.myRematch = false;
@@ -494,6 +555,12 @@ class App {
         audio.setMusic(this.profile.music);
         if (this.profile.music) audio.playMusic('menu');
         lb.saveProfile(this.profile);
+        this.screens.refresh();
+        break;
+      case 'toggle-quality':
+        // An explicit choice also stops the frame-rate watcher from second
+        // guessing it later in the session.
+        this.setQuality(this.profile.quality === 'low' ? 'high' : 'low');
         this.screens.refresh();
         break;
       case 'toggle-sfx':

@@ -504,10 +504,23 @@ export class Match {
       pad.pending = p[4] ? { id: this.chars[i].special.id, until: Infinity } : null;
     });
 
-    this.balls = s.bl.map((b) => ({
-      id: b[5], x: b[0], y: b[1], vx: b[2], vy: b[3],
-      speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0, owner: -1,
-    }));
+    // Snapshots arrive at 30 Hz but we draw more often than that, so hard-
+    // assigning positions makes the ball visibly pop. Keep the ball we are
+    // already drawing and record where the host says it should be; extrapolate()
+    // eases the difference away between packets.
+    const previous = new Map(this.balls.map((b) => [b.id, b]));
+    this.balls = s.bl.map((b) => {
+      const was = previous.get(b[5]);
+      const fresh = {
+        id: b[5], x: b[0], y: b[1], vx: b[2], vy: b[3],
+        speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0, owner: -1,
+      };
+      if (!was) return fresh;
+      const gap = Math.hypot(was.x - fresh.x, was.y - fresh.y);
+      // A big jump means a bounce or a fresh serve, not drift — take it as-is.
+      if (gap > 0.12) return fresh;
+      return { ...fresh, x: was.x, y: was.y, tx: fresh.x, ty: fresh.y };
+    });
 
     this.crates = s.cr.map((c) => ({
       x: c[0], y: c[1], spin: c[2], vx: 0, vy: 0, item: itemById(c[3]),
@@ -522,6 +535,15 @@ export class Match {
     for (const b of this.balls) {
       b.x = clamp(b.x + b.vx * dt, BALL_R, 1 - BALL_R);
       b.y += b.vy * dt;
+      // Ease toward wherever the host last said this ball was, so the
+      // correction is a drift rather than a jump.
+      if (b.tx != null) {
+        b.tx += b.vx * dt;
+        b.ty += b.vy * dt;
+        const k = Math.min(1, dt * 9);
+        b.x += (b.tx - b.x) * k;
+        b.y += (b.ty - b.y) * k;
+      }
     }
     for (const c of this.crates) c.spin += dt * 1.4;
     this.shake = Math.max(0, this.shake - dt * 2.6);
