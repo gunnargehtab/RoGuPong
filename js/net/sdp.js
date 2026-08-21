@@ -17,6 +17,9 @@ const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 export const TAG_COMPACT = 'RGP';
 export const TAG_FULL = 'RGX';
 
+/** What a complete signalling code looks like, whichever encoding made it. */
+export const CODE_RE = /^RG[PX][A-Z2-7]+$/;
+
 function b32encode(bytes) {
   let out = '', buf = 0, bits = 0;
   for (const b of bytes) {
@@ -318,13 +321,16 @@ export async function packSignal(sdp, role) {
 
 /**
  * Pull a signalling code out of whatever the user gave us: the bare code, a
- * code with spaces in it, or the full invite link an iPhone's camera hands over.
+ * code with spaces in it, the full invite link an iPhone's camera hands over,
+ * or a whole chat message with the code somewhere inside it.
  */
 export function extractCode(input) {
   const text = String(input).trim();
   const fromLink = /[#?&]j=([A-Za-z2-7]+)/.exec(text);
-  const candidate = fromLink ? fromLink[1] : text;
-  return candidate.toUpperCase().replace(/[\s-]/g, '');
+  if (fromLink) return fromLink[1].toUpperCase();
+  const squashed = text.toUpperCase().replace(/[\s-]/g, '');
+  const embedded = /RG[PX][A-Z2-7]+/.exec(squashed);
+  return embedded ? embedded[0] : squashed;
 }
 
 /** Turn a scanned/pasted code back into { role, sdp }. */

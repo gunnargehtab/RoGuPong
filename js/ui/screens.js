@@ -12,7 +12,7 @@ import { STAGES } from '../game/stages.js';
 import { ITEMS } from '../game/items.js';
 import { drawFighter } from '../game/render.js';
 import { drawQrToCanvas } from '../net/qr.js';
-import { prettyCode, inviteLink } from '../net/sdp.js';
+import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 
@@ -186,8 +186,10 @@ export class Screens {
     panel.innerHTML = `
       <h3>Getting connected</h3>
       <p>One of you picks <b>Host</b> and shows the code on screen. The other picks
-      <b>Join</b> and points their camera at it, then shows the reply back. That is the
-      whole handshake — after that the phones talk straight to each other over the WiFi.</p>
+      <b>Join</b> and points their camera at it, then shows the reply back — the
+      host&rsquo;s camera is already watching for it. That is the whole handshake:
+      after that the phones talk straight to each other over the WiFi. No camera?
+      Every step can also <b>share</b> or paste the code through any chat app.</p>
       <h3 style="margin-top:12px">Controls</h3>
       <p>Slide your thumb anywhere to move your paddle. Where the ball hits the paddle
       decides the angle: middle sends it straight, edges send it wide. Moving as you
@@ -334,13 +336,15 @@ export class Screens {
     panel.innerHTML = `<p>${instruction}</p>`;
     wrap.appendChild(panel);
 
-    if (showCamera) {
+    const makeVideo = (mini) => {
       const video = document.createElement('video');
       video.id = 'camera';
       video.playsInline = true;
       video.muted = true;
-      wrap.appendChild(video);
-    }
+      if (mini) video.className = 'mini';
+      return video;
+    };
+    if (showCamera && showCamera !== 'mini') wrap.appendChild(makeVideo(false));
 
     if (code) {
       const box = document.createElement('div');
@@ -374,10 +378,21 @@ export class Screens {
       wrap.appendChild(box);
 
       const details = document.createElement('details');
+      // navigator.share hands the code to any chat app in one tap; an invite
+      // shared that way is a link, so the friend just taps it and the game
+      // joins itself.
+      const shareBtn = navigator.share
+        ? `<button class="btn small secondary" data-action="share-code" data-share="${asLink ? 'link' : 'text'}">Share</button>`
+        : '';
       details.innerHTML = `<summary><small>Can't scan? Send the code instead</small></summary>
         <div class="code-box" id="rawcode">${esc(prettyCode(code))}</div>
-        <button class="btn small secondary" data-action="copy-code" style="margin-top:8px">Copy code</button>`;
+        <div class="row" style="margin-top:8px">
+          ${shareBtn}
+          <button class="btn small secondary" data-action="copy-code">Copy code</button>
+        </div>`;
       wrap.appendChild(details);
+
+      if (showCamera === 'mini') wrap.appendChild(makeVideo(true));
     }
 
     if (status) {
@@ -415,31 +430,60 @@ export class Screens {
         actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
       });
     }
-    if (data.stage === 'scan') {
-      return this.signalScreen({
-        title: 'SCAN REPLY',
-        step: 1, steps: 3,
-        instruction: 'Point your camera at the code on your friend&rsquo;s phone.',
-        showCamera: true,
-        status: { text: 'Looking for a code', kind: 'warn', pulse: true },
-        actions: `
-          <button class="btn secondary" data-action="paste-answer">Paste it instead</button>
-          <button class="btn secondary" data-action="host-back">Back to my code</button>`,
-      });
-    }
+    // The camera runs while the invite is on screen: the moment the friend's
+    // reply code exists, pointing this phone at it is the whole remaining job.
+    const scanning = scannerSupported();
     return this.signalScreen({
       title: 'HOSTING',
       step: 0, steps: 3,
       instruction: 'Show this to your friend. <b>On an iPhone</b> they just open the '
         + 'Camera app, point it here and tap the banner. On Android they tap '
-        + '<b>Join</b> in the game. Either way they will show you a reply code to scan back.',
+        + '<b>Join</b> in the game. '
+        + (scanning
+          ? 'When their reply code appears, point this phone at it — it connects by itself.'
+          : 'They will show you a reply code to enter back.'),
       code: data.code,
       asLink: true,
-      status: { text: 'Waiting for a reply', kind: 'warn', pulse: true },
+      showCamera: scanning ? 'mini' : false,
+      status: scanning
+        ? { text: 'Watching for their reply', kind: 'warn', pulse: true }
+        : { text: 'Waiting for a reply', kind: 'warn', pulse: true },
       actions: `
-        <button class="btn" data-action="host-scan">${scannerSupported() ? 'Scan their reply' : 'Enter their reply'}</button>
+        <button class="btn ${scanning ? 'secondary' : ''}" data-action="paste-answer">
+          ${scanning ? 'Paste the reply instead' : 'Enter their reply'}</button>
         <button class="btn secondary" data-action="cancel">Cancel</button>`,
     });
+  }
+
+  /**
+   * The box a code gets pasted into. A paste is the submit: a complete code is
+   * unmistakable, so there is nothing to confirm. The clipboard button saves
+   * even the long-press when the browser allows reading it.
+   */
+  pasteArea(action) {
+    const box = document.createElement('div');
+    box.style.display = 'flex';
+    box.style.flexDirection = 'column';
+    box.style.gap = '8px';
+    const ta = document.createElement('textarea');
+    ta.id = 'paste-input';
+    ta.placeholder = 'RGP…';
+    ta.autocapitalize = 'characters';
+    ta.spellcheck = false;
+    ta.addEventListener('input', (e) => {
+      if (e.inputType !== 'insertFromPaste') return;
+      if (CODE_RE.test(extractCode(ta.value))) this.app.handleAction(action);
+    });
+    box.appendChild(ta);
+    if (navigator.clipboard?.readText) {
+      const btn = document.createElement('button');
+      btn.className = 'btn small secondary';
+      btn.dataset.action = 'clip-paste';
+      btn.dataset.next = action;
+      btn.textContent = 'Paste from clipboard';
+      box.appendChild(btn);
+    }
+    return box;
   }
 
   screenJoin(data) {
@@ -456,7 +500,8 @@ export class Screens {
       return this.signalScreen({
         title: 'YOUR REPLY',
         step: 1, steps: 3,
-        instruction: 'Now show <b>this</b> code to the host so they can scan it back.',
+        instruction: 'Now show <b>this</b> code to the host — their camera is already '
+          + 'looking for it. If they can&rsquo;t scan, send it to them instead.',
         code: data.code,
         status: { text: 'Waiting for the host', kind: 'warn', pulse: true },
         actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
@@ -466,17 +511,12 @@ export class Screens {
       const wrap = this.signalScreen({
         title: 'PASTE CODE',
         step: 0, steps: 3,
-        instruction: 'Paste the code your friend sent you.',
+        instruction: 'Paste the code your friend sent you — it connects as soon as it lands.',
         actions: `
           <button class="btn" data-action="use-pasted">Connect</button>
           <button class="btn secondary" data-action="cancel">Cancel</button>`,
       });
-      const ta = document.createElement('textarea');
-      ta.id = 'paste-input';
-      ta.placeholder = 'RGP…';
-      ta.autocapitalize = 'characters';
-      ta.spellcheck = false;
-      wrap.insertBefore(ta, wrap.lastChild);
+      wrap.insertBefore(this.pasteArea('use-pasted'), wrap.lastChild);
       return wrap;
     }
     return this.signalScreen({
@@ -501,12 +541,7 @@ export class Screens {
         <button class="btn" data-action="use-answer">Connect</button>
         <button class="btn secondary" data-action="host-back">Back</button>`,
     });
-    const ta = document.createElement('textarea');
-    ta.id = 'paste-input';
-    ta.placeholder = 'RGP…';
-    ta.autocapitalize = 'characters';
-    ta.spellcheck = false;
-    wrap.insertBefore(ta, wrap.lastChild);
+    wrap.insertBefore(this.pasteArea('use-answer'), wrap.lastChild);
     return wrap;
   }
 

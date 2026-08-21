@@ -221,6 +221,9 @@ input:focus, textarea:focus { border-color: var(--gold); }
   background: #000; border: 3px solid var(--edge); display: block;
 }
 
+/* The strip that watches for the reply while the invite is on screen. */
+#camera.mini { aspect-ratio: auto; height: 110px; }
+
 .steps { display: flex; gap: 6px; justify-content: center; }
 .steps span {
   width: 10px; height: 10px; background: #3d2a63; border: 2px solid #16092a;

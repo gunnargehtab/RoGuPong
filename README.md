@@ -64,10 +64,13 @@ Cameras will not work over plain `http://` on a phone, so use the
 2. One taps **Host a match** and shows the invite on screen.
 3. The other scans it — **on Android** tap *Join a match* in the game, **on an
    iPhone** just open the Camera app, point it at the invite and tap the banner.
-4. The joiner's phone shows a reply code; the host scans that back.
+4. The joiner's phone shows a reply code; the host's camera is already
+   watching for it, so they just point their phone at it.
 
-Two scans and you are in the lobby. If either phone has no camera, every step
-also gives you the code as text — send it over any chat app and paste it in.
+Two scans, zero taps in between, and you are in the lobby. If either phone has
+no camera, every step also offers the code as text with a **Share** button — a
+shared invite is a link your friend just taps, and a pasted code connects the
+moment it lands in the box.
 
 > **If one of you is on an iPhone, let the Android phone host.** No browser on
 > iOS gives a web page access to a QR scanner, so the invite is encoded as a

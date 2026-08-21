@@ -17,22 +17,35 @@ const ICE_SERVERS = [
 ];
 
 const GATHER_TIMEOUT_MS = 3000;
+const GATHER_SETTLE_MS = 400;
 
 function waitForIceGathering(pc) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve) => {
     let done = false;
+    let settle = null;
     const finish = () => {
       if (done) return;
       done = true;
       pc.removeEventListener('icegatheringstatechange', check);
+      pc.removeEventListener('icecandidate', onCandidate);
       clearTimeout(timer);
+      clearTimeout(settle);
       resolve();
     };
     const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
+    // Local candidates arrive within milliseconds and STUN ones, when the
+    // internet is reachable at all, a couple hundred more; once the list has
+    // been quiet for a beat it is as complete as it is going to get. Without
+    // this, an internet-less WiFi — the network this game is for — only ever
+    // reaches 'complete' by burning the whole timeout, on both phones.
+    const onCandidate = (ev) => {
+      if (!ev.candidate) return;
+      clearTimeout(settle);
+      settle = setTimeout(finish, GATHER_SETTLE_MS);
+    };
     pc.addEventListener('icegatheringstatechange', check);
-    // Offline or firewalled STUN can stall gathering forever. The local
-    // candidates arrive in milliseconds, so don't wait around for the rest.
+    pc.addEventListener('icecandidate', onCandidate);
     const timer = setTimeout(finish, GATHER_TIMEOUT_MS);
   });
 }
