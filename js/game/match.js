@@ -44,6 +44,9 @@ function mulberry(seed) {
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+/** A beach ball is a much bigger target; everything that collides asks here. */
+export const ballRadius = (b) => BALL_R * (b.beach > 0 ? 2.3 : 1);
+
 let ballSeq = 0;
 
 function makeBall(x, y, angle, speed, owner) {
@@ -55,6 +58,8 @@ function makeBall(x, y, angle, speed, owner) {
     speed,
     spin: 0,
     fire: 0,
+    ghost: 0,       // seconds of near-invisibility left
+    beach: 0,       // seconds of huge-and-floaty left
     owner,          // last player to touch it — decides who gets an item crate
   };
 }
@@ -73,6 +78,7 @@ export class Match {
     this.phaseTime = COUNTDOWN;
     this.scores = [0, 0];
     this.meter = [0, 0];
+    this.streak = [0, 0];         // consecutive points, for the on-fire fanfare
     this.rally = 0;
     this.bestRally = 0;
     this.winner = -1;
@@ -84,6 +90,7 @@ export class Match {
       vx: 0,
       grow: 0,
       frost: 0,
+      shrink: 0,
       shield: 0,
       pending: null,      // 'afterburn' | 'curve' armed for the next hit
       lastItem: null,
@@ -106,7 +113,8 @@ export class Match {
     // Past twenty returns the paddles start closing in on each other. Long
     // rallies are the best part of pong right up until they never end.
     const pressure = 1 - Math.min(0.34, Math.max(0, this.rally - 20) * 0.0045);
-    return base * pressure * (this.paddles[i].grow > 0 ? 1.6 : 1);
+    const p = this.paddles[i];
+    return base * pressure * (p.grow > 0 ? 1.6 : 1) * (p.shrink > 0 ? 0.55 : 1);
   }
 
   paddleSpeed(i) {
@@ -145,6 +153,7 @@ export class Match {
       const p = this.paddles[i];
       p.grow = Math.max(0, p.grow - dt);
       p.frost = Math.max(0, p.frost - dt);
+      p.shrink = Math.max(0, p.shrink - dt);
       if (p.pending && p.pending.until <= this.time) p.pending = null;
       this.meter[i] = clamp(this.meter[i] + METER_PER_SEC * this.chars[i].meterRate * dt, 0, 1);
       if (this.input[i].special) {
@@ -209,6 +218,9 @@ export class Match {
       const b = this.balls[bi];
       if (!b) continue;
       b.fire = Math.max(0, b.fire - dt);
+      b.ghost = Math.max(0, b.ghost - dt);
+      b.beach = Math.max(0, b.beach - dt);
+      const rad = ballRadius(b);
 
       if (b.spin !== 0) {
         b.vx += b.spin * dt * 0.55;
@@ -223,11 +235,11 @@ export class Match {
       b.y += b.vy * dt;
 
       // Side walls
-      if (b.x < BALL_R && b.vx < 0) {
-        b.x = BALL_R; b.vx = -b.vx; b.spin = -b.spin * 0.5;
+      if (b.x < rad && b.vx < 0) {
+        b.x = rad; b.vx = -b.vx; b.spin = -b.spin * 0.5;
         this.event({ t: 'wall', x: b.x, y: b.y });
-      } else if (b.x > 1 - BALL_R && b.vx > 0) {
-        b.x = 1 - BALL_R; b.vx = -b.vx; b.spin = -b.spin * 0.5;
+      } else if (b.x > 1 - rad && b.vx > 0) {
+        b.x = 1 - rad; b.vx = -b.vx; b.spin = -b.spin * 0.5;
         this.event({ t: 'wall', x: b.x, y: b.y });
       }
 
@@ -238,8 +250,8 @@ export class Match {
       this.collideCrates(b);
 
       // Goals
-      if (b.y > 1 + BALL_R) { this.concede(0, b, bi); continue; }
-      if (b.y < -BALL_R) { this.concede(1, b, bi); continue; }
+      if (b.y > 1 + rad) { this.concede(0, b, bi); continue; }
+      if (b.y < -rad) { this.concede(1, b, bi); continue; }
     }
   }
 
@@ -247,7 +259,8 @@ export class Match {
     const py = PADDLE_Y[i];
     const towardMe = i === 0 ? b.vy > 0 : b.vy < 0;
     if (!towardMe) return;
-    const surface = i === 0 ? py - PADDLE_H / 2 - BALL_R : py + PADDLE_H / 2 + BALL_R;
+    const rad = ballRadius(b);
+    const surface = i === 0 ? py - PADDLE_H / 2 - rad : py + PADDLE_H / 2 + rad;
     const crossed = i === 0 ? b.y >= surface : b.y <= surface;
     if (!crossed) return;
     // Only within a paddle's thickness — a ball already past it is a goal.
@@ -273,6 +286,9 @@ export class Match {
     const heat = Math.min(0.35, this.rally * 0.006);
     const speedup = SPEEDUP + Math.min(0.05, this.rally * 0.0015);
     b.speed = Math.min(MAX_SPEED * (1 + heat), b.speed * speedup);
+    // A beach ball stays floaty however long the rally runs; only a special
+    // (afterburn below) is allowed to punch through the cap.
+    if (b.beach > 0) b.speed = Math.min(b.speed, BASE_SPEED * 1.15);
 
     let big = false;
     const pending = p.pending;
@@ -306,11 +322,12 @@ export class Match {
     const sy = SHIELD_Y[i];
     const towardMe = i === 0 ? b.vy > 0 : b.vy < 0;
     if (!towardMe) return;
-    const crossed = i === 0 ? b.y >= sy - BALL_R : b.y <= sy + BALL_R;
+    const rad = ballRadius(b);
+    const crossed = i === 0 ? b.y >= sy - rad : b.y <= sy + rad;
     if (!crossed) return;
 
     p.shield = 0;
-    b.y = i === 0 ? sy - BALL_R : sy + BALL_R;
+    b.y = i === 0 ? sy - rad : sy + rad;
     b.vy = -b.vy;
     b.owner = i;
     b.speed = Math.min(MAX_SPEED, b.speed * 1.05);
@@ -321,7 +338,7 @@ export class Match {
   collideCrates(b) {
     for (let ci = this.crates.length - 1; ci >= 0; ci--) {
       const c = this.crates[ci];
-      if (Math.hypot(c.x - b.x, c.y - b.y) > CRATE_R + BALL_R) continue;
+      if (Math.hypot(c.x - b.x, c.y - b.y) > CRATE_R + ballRadius(b)) continue;
       this.crates.splice(ci, 1);
       const owner = b.owner >= 0 ? b.owner : (b.vy > 0 ? 1 : 0);
       this.applyItem(c.item, owner, b);
@@ -354,6 +371,22 @@ export class Match {
           extra.vx = Math.sin(angle) * extra.speed;
           this.balls.push(extra);
         }
+        break;
+      }
+      case 'ghost':
+        ball.ghost = item.duration;
+        break;
+      case 'shrink':
+        this.paddles[foe].shrink = item.duration;
+        break;
+      case 'beach': {
+        ball.beach = item.duration;
+        ball.speed = Math.max(BASE_SPEED * 0.75, ball.speed * 0.55);
+        this.renormalise(ball);
+        // The radius just jumped; a ball inflated next to a wall would be
+        // stuck inside it until the next bounce.
+        const rad = ballRadius(ball);
+        ball.x = clamp(ball.x, rad, 1 - rad);
         break;
       }
       default:
@@ -428,14 +461,15 @@ export class Match {
   concede(loser, ball, index) {
     this.balls.splice(index, 1);
     const scorer = 1 - loser;
+    this.scores[scorer]++;
+    this.streak[scorer]++;
+    this.streak[loser] = 0;
     if (this.balls.length > 0) {
       // Multiball: the rally carries on, the point still counts.
-      this.scores[scorer]++;
       this.event({ t: 'goal', x: ball.x, y: loser === 0 ? 1 : 0, p: scorer, quiet: true });
       if (this.scores[scorer] >= this.target) { this.balls = []; this.pointBreak(scorer); }
       return;
     }
-    this.scores[scorer]++;
     this.pointBreak(scorer);
   }
 
@@ -447,7 +481,13 @@ export class Match {
     this.crates = [];
     this.shake = 1.2;
     for (const p of this.paddles) { p.shield = 0; p.pending = null; }
-    this.event({ t: 'goal', x: 0.5, y: loser === 0 ? 1 : 0, p: scorer, rally: this.rally });
+    this.event({
+      t: 'goal', x: 0.5, y: loser === 0 ? 1 : 0, p: scorer, rally: this.rally,
+      streak: this.streak[scorer],
+      // Reaching match point deserves its own drum roll; winning outright
+      // gets the 'match' event instead.
+      mp: this.scores[scorer] === this.target - 1 ? 1 : 0,
+    });
   }
 
   get matchPoint() {
@@ -467,13 +507,15 @@ export class Match {
       me: this.meter.map((m) => +m.toFixed(3)),
       rl: this.rally,
       wn: this.winner,
+      st: this.streak,
       pd: this.paddles.map((p, i) => [
         +p.x.toFixed(4), +this.paddleWidth(i).toFixed(4),
         p.shield > 0 ? 1 : 0, p.frost > 0 ? 1 : 0, p.pending ? 1 : 0,
+        p.shrink > 0 ? 1 : 0,
       ]),
       bl: this.balls.map((b) => [
         +b.x.toFixed(4), +b.y.toFixed(4), +b.vx.toFixed(3), +b.vy.toFixed(3),
-        b.fire > 0 ? 1 : 0, b.id,
+        b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
       ]),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
       ev: this.events,
@@ -493,6 +535,7 @@ export class Match {
     this.rally = s.rl;
     this.bestRally = Math.max(this.bestRally, s.rl);
     this.winner = s.wn;
+    if (s.st) this.streak = s.st;
     this.shake = Math.max(this.shake, s.sh);
 
     s.pd.forEach((p, i) => {
@@ -502,6 +545,7 @@ export class Match {
       pad.shield = p[2] ? 1 : 0;
       pad.frost = p[3] ? 1 : 0;
       pad.pending = p[4] ? { id: this.chars[i].special.id, until: Infinity } : null;
+      pad.shrink = p[5] ? 1 : 0;
     });
 
     // Snapshots arrive at 30 Hz but we draw more often than that, so hard-
@@ -514,6 +558,7 @@ export class Match {
       const fresh = {
         id: b[5], x: b[0], y: b[1], vx: b[2], vy: b[3],
         speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0, owner: -1,
+        ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0,
       };
       if (!was) return fresh;
       const gap = Math.hypot(was.x - fresh.x, was.y - fresh.y);
@@ -533,7 +578,8 @@ export class Match {
   extrapolate(dt) {
     if (this.phase !== 'play') return;
     for (const b of this.balls) {
-      b.x = clamp(b.x + b.vx * dt, BALL_R, 1 - BALL_R);
+      const rad = ballRadius(b);
+      b.x = clamp(b.x + b.vx * dt, rad, 1 - rad);
       b.y += b.vy * dt;
       // Ease toward wherever the host last said this ball was, so the
       // correction is a drift rather than a jump.

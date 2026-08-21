@@ -228,7 +228,7 @@ class App {
     this.predictPaddle(dt);
 
     for (const ev of m.drainEvents()) {
-      reactTo(ev, this.fx, m.chars, audio, { accent: this.stage.accent });
+      reactTo(ev, this.fx, m.chars, audio, { accent: this.stage.accent, view: this.view });
       if (ev.t === 'goal' && !ev.quiet && navigator.vibrate) navigator.vibrate(ev.p === this.view ? 30 : [12, 40, 12]);
       if (ev.t === 'special' && navigator.vibrate) navigator.vibrate(45);
     }

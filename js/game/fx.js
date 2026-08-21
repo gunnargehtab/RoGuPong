@@ -11,6 +11,8 @@ export class Fx {
     this.rings = [];
     this.texts = [];
     this.flash = null;
+    this.confetti = null;         // {time, dir} — a sustained rain, not a burst
+    this.confettiCarry = 0;
     this.freeze = 0;
     // Scales every burst. Dropped on phones that cannot afford the confetti;
     // the events still read, there is just less of each one.
@@ -32,6 +34,17 @@ export class Fx {
     this.rings.length = 0;
     this.texts.length = 0;
     this.flash = null;
+    this.confetti = null;
+  }
+
+  /**
+   * Confetti rain for the winner's celebration. `dir` is +1 when the local
+   * view's "up" is court-up (player 0) and -1 when the renderer flips y
+   * (player 1), so the paper always falls downward on the phone showing it.
+   */
+  celebrate(duration = 2.4, dir = 1) {
+    this.confetti = { time: duration, dir };
+    this.confettiCarry = 0;
   }
 
   /** A spray of sparks. `spread` is in radians around `dir`. */
@@ -78,6 +91,30 @@ export class Fx {
   }
 
   update(dt) {
+    if (this.confetti) {
+      this.confetti.time -= dt;
+      this.confettiCarry += 70 * this.budget * dt;
+      const colors = ['#ff4d3d', '#ffd93b', '#8affc1', '#3da5ff', '#ff56d0', '#ffffff'];
+      const dir = this.confetti.dir;
+      while (this.confettiCarry >= 1) {
+        this.confettiCarry -= 1;
+        this.particles.push({
+          x: Math.random(),
+          y: dir > 0 ? -0.04 : 1.04,
+          vx: (Math.random() - 0.5) * 0.14,
+          vy: dir * (0.10 + Math.random() * 0.18),
+          life: 2.4, age: 0,
+          size: 0.010 * (0.6 + Math.random() * 0.8),
+          color: colors[(Math.random() * colors.length) | 0],
+          gravity: 0.16 * dir,
+          squares: true,
+          spin: (Math.random() - 0.5) * 14,
+          rot: Math.random() * TAU,
+        });
+      }
+      if (this.confetti.time <= 0) this.confetti = null;
+    }
+
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.age += dt;
@@ -113,7 +150,7 @@ export class Fx {
  * every visual reaction to the rules lives in one readable place.
  */
 export function reactTo(ev, fx, chars, audio, opts = {}) {
-  const { accent = '#fff' } = opts;
+  const { accent = '#fff', view = 0 } = opts;
   const who = ev.p != null ? chars[ev.p] : null;
   const tint = who ? who.color : accent;
   const tint2 = who ? who.color2 : '#fff';
@@ -171,6 +208,15 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       fx.bang('#ffffff', 0.7, 0.3);
       fx.burst(ev.x, ev.y, { count: 44, color: tint, color2: '#ffffff', speed: 1.2, spread: TAU, life: 0.9, gravity: 0.5 });
       fx.ring(ev.x, ev.y, { color: tint2, to: 0.7, life: 0.6, width: 0.016 });
+      if (ev.streak >= 3) {
+        // Below centre so it clears the POINT banner, drifting up as it fades.
+        fx.text(0.5, 0.64, ev.streak + ' IN A ROW!', { color: '#ff9b4a', scale: 1.25, life: 1.3 });
+        fx.burst(0.5, 0.5, { count: 20, color: '#ff9b4a', color2: '#ffd166', speed: 0.8, spread: TAU, life: 0.6 });
+      }
+      if (ev.mp) {
+        fx.bang('#ff4d3d', 0.3, 0.4);
+        fx.ring(0.5, 0.5, { color: '#ff4d3d', to: 0.9, life: 0.8, width: 0.02 });
+      }
       audio?.goal();
       break;
     }
@@ -178,15 +224,27 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       fx.ring(0.5, 0.5, { color: '#ffffff', to: 0.2, life: 0.35 });
       audio?.blip(660, 0.07, 'square', 0.05);
       break;
-    case 'match':
+    case 'match': {
       fx.bang('#ffffff', 0.9, 0.5);
-      for (let i = 0; i < 5; i++) {
-        setTimeout(() => fx.burst(0.15 + Math.random() * 0.7, 0.2 + Math.random() * 0.6, {
-          count: 30, color: tint, color2: '#ffd93b', speed: 1.0, spread: TAU, life: 1.0,
-        }), i * 130);
+      const won = ev.p === view;
+      // Confetti only rains on the winner's phone; the paper falls toward
+      // whichever screen edge is "down" for that player's flipped view.
+      if (won) fx.celebrate(2.4, view === 1 ? -1 : 1);
+      for (let i = 0; i < (won ? 9 : 5); i++) {
+        setTimeout(() => {
+          const x = 0.12 + Math.random() * 0.76;
+          const y = 0.15 + Math.random() * 0.7;
+          fx.burst(x, y, {
+            count: won ? 36 : 26, color: tint, color2: '#ffd93b',
+            speed: 1.1, spread: TAU, life: 1.1, gravity: 0.4,
+          });
+          fx.ring(x, y, { color: '#ffffff', to: 0.22, life: 0.5 });
+        }, i * 150);
       }
-      audio?.victory();
+      // No jingle here: finishMatch already plays victory or defeat per view,
+      // and a second victory() on the losing phone was clashing with it.
       break;
+    }
     default:
       break;
   }
