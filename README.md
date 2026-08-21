@@ -96,11 +96,13 @@ You are always the paddle at the bottom of your own screen.
 
 ## What is in the game
 
-**Four fighters**, each with one signature move and a different paddle feel:
+**Six fighters**, each with one signature move and a different paddle feel:
 **RO** (all-rounder, AFTERBURN — a near-double-speed return), **GU** (wide and
 slow, AEGIS — a barrier that saves one ball), **NEO** (small and fast, CURVE —
 bends the ball through the air), **BRIO** (heavy, QUAKE — slams every ball back
-and bogs the rival down).
+and bogs the rival down), **MAG** (patient, MAGNET — catches the next ball so
+you can aim it, then flings it back fast), **BOO** (small and spooky, PHANTOM —
+your next return turns into a ghost).
 
 **Seven item crates** drift through the middle of the court: multiball, big
 paddle, deep freeze, turbo, ghost ball, shrink ray and a giant beach ball.

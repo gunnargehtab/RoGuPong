@@ -33,6 +33,8 @@ const CRESTS = {
   gu: ['.2.......2.', '.22.....22.', '..2.....2..'],
   neo: ['.....2.....', '....2.2....', '...2...2...'],
   brio: ['..2..2..2..', '...2..2....', '..2222222..'],
+  mag: ['..22...22..', '..22...22..', '...22222...'],   // a little horseshoe magnet
+  boo: ['...22222...', '..22.2.22..', '..2.2.2.2..'],   // a wavy ghost fringe
 };
 
 /** Draw a character's little pixel mascot, centred on (cx, cy). */
@@ -484,12 +486,20 @@ export class Renderer {
         ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.fillRect(sx - r * 0.55, sy - r * 0.8, r * 0.6, r * 0.3);
       } else {
-        const body = ghosted ? '#c9a2ff' : hot ? '#ffd166' : '#ffffff';
-        this.glow(ghosted ? '#c9a2ff' : hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
+        const caught = b.held >= 0;
+        const body = caught ? '#b8ffd9' : ghosted ? '#c9a2ff' : hot ? '#ffd166' : '#ffffff';
+        this.glow(caught ? '#3ddc84' : ghosted ? '#c9a2ff' : hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
         ctx.fillStyle = body;
         ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-        ctx.fillStyle = ghosted ? '#e9dcff' : hot ? '#fff3c4' : '#ffffff';
+        ctx.fillStyle = caught ? '#ffffff' : ghosted ? '#e9dcff' : hot ? '#fff3c4' : '#ffffff';
         ctx.fillRect(sx - r * 0.45, sy - r * 0.9, r * 0.9, r * 0.5);
+        if (caught) {
+          // Crackle so a caught ball reads as "held", not "frozen".
+          ctx.fillStyle = '#3ddc84';
+          const k = Math.floor(time * 10) % 2;
+          ctx.fillRect(sx - r - 3, sy + (k ? -r : r) - 1, 2, 2);
+          ctx.fillRect(sx + r + 1, sy + (k ? r : -r) - 1, 2, 2);
+        }
       }
       ctx.restore();
     }
@@ -538,6 +548,23 @@ export class Renderer {
         ctx.fillStyle = '#ff8ae2';
         ctx.fillRect(sx - w / 2 - 7, sy - 2, 4, 4);
         ctx.fillRect(sx + w / 2 + 3, sy - 2, 4, 4);
+      }
+      if (p.magnet > 0) {
+        // Green field lines arcing toward the court: this paddle is waiting
+        // to catch. The local player always sits at the bottom of the screen,
+        // so their arcs open upward and the opponent's open downward.
+        ctx.strokeStyle = '#3ddc84';
+        ctx.lineWidth = 2;
+        const atBottom = i === view;
+        for (let k = 0; k < 3; k++) {
+          const rr = h * (1.4 + k * 0.8);
+          ctx.globalAlpha = 0.55 - k * 0.15;
+          ctx.beginPath();
+          if (atBottom) ctx.arc(sx, sy, rr, Math.PI, 0);
+          else ctx.arc(sx, sy, rr, 0, Math.PI);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
       }
 
       if (p.shield > 0) {

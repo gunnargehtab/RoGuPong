@@ -66,7 +66,7 @@ clamped so nothing ever leaves flatter than a returnable angle.
 
 ## 3. The roster
 
-Four fighters. Nobody is strictly better: wide paddles are slow, fast paddles
+Six fighters. Nobody is strictly better: wide paddles are slow, fast paddles
 are small, and every special costs a full meter.
 
 | | Paddle | Speed | Special | What it does |
@@ -75,12 +75,21 @@ are small, and every special costs a full meter.
 | **GU**, the Azure Bulwark | 1.35 | 0.85 | AEGIS | A barrier behind the paddle saves one ball, then shatters |
 | **NEO**, the Neon Trickster | 0.80 | 1.28 | CURVE | Next return bends through the air for three seconds |
 | **BRIO**, the Bronze Bruiser | 1.12 | 0.95 | QUAKE | Slams every ball back and bogs the rival's paddle down |
+| **MAG**, the Junkyard Magnet | 1.05 | 0.92 | MAGNET | Catches the next ball; slide to aim, it flings back at 1.3× |
+| **BOO**, the Friendly Phantom | 0.85 | 1.18 | PHANTOM | Next return turns the ball into a ghost for three seconds |
 
-The specials are deliberately of two kinds. AFTERBURN and CURVE are *armed* —
-they wait for your next hit, so using them well means choosing which rally to
-spend them on. AEGIS and QUAKE are *immediate* — they change the board the
-moment you press the button. That gives the roster two different rhythms of
-play rather than four flavours of the same one.
+The specials are deliberately of two kinds. AFTERBURN, CURVE and PHANTOM are
+*armed* — they wait for your next hit, so using them well means choosing which
+rally to spend them on. AEGIS and QUAKE are *immediate* — they change the
+board the moment you press the button. MAGNET sits between the two: it arms
+the paddle, but the payoff is interactive — the caught ball rides the paddle
+for a second and the drag is the aim: however far you haul it from where it
+was caught sets the launch angle, so dragging across the court slings a sharp
+diagonal and holding your ground fires it dead straight. Position rather than
+velocity, deliberately — no split-second flick timing required of a
+seven-year-old thumb. A quake breaks the catch: the ball is slammed off the
+magnet and comes back as a plain unaimed return, which keeps BRIO an honest
+answer to a MAG who camps.
 
 **The meter** fills at 0.17 per return you make plus a slow trickle of 0.022/s,
 so an aggressive rallying player charges in about five exchanges and a passive

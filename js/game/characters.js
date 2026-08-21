@@ -1,6 +1,6 @@
 // RoGuPong — the roster.
 //
-// Four fighters, each with one signature move and a different paddle feel.
+// Six fighters, each with one signature move and a different paddle feel.
 // Nobody is strictly better than anybody else: the wide paddles are slow, the
 // fast paddles are small, and every special trades a full meter for a
 // different kind of advantage.
@@ -76,6 +76,42 @@ export const CHARACTERS = [
       name: 'QUAKE',
       desc: 'A shockwave slams every ball back and bogs down your rival.',
       duration: 2.5,
+    },
+  },
+  {
+    id: 'mag',
+    name: 'MAG',
+    title: 'The Junkyard Magnet',
+    blurb: 'Patient scavenger. Catches what you throw and throws it back harder.',
+    paddle: 1.05,
+    speed: 0.92,
+    meterRate: 1.00,
+    color: '#3ddc84',
+    color2: '#b8ffd9',
+    trail: '#4be08c',
+    special: {
+      id: 'magnet',
+      name: 'MAGNET',
+      desc: 'Your paddle catches the next ball. Slide to aim, then it flings back fast.',
+      duration: 5.0,     // how long the paddle stays magnetic waiting for a ball
+    },
+  },
+  {
+    id: 'boo',
+    name: 'BOO',
+    title: 'The Friendly Phantom',
+    blurb: 'Mostly transparent, entirely rude. Small paddle, spooky hands.',
+    paddle: 0.85,
+    speed: 1.18,
+    meterRate: 1.05,
+    color: '#9b7bff',
+    color2: '#e0d4ff',
+    trail: '#c9a2ff',
+    special: {
+      id: 'phantom',
+      name: 'PHANTOM',
+      desc: 'Your next return turns the ball into a ghost for three whole seconds.',
+      duration: 6.0,     // arming window, like AFTERBURN
     },
   },
 ];
