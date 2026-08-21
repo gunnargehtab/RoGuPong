@@ -102,6 +102,18 @@ items reward winning the exchange, not standing in the right place.
 | BIG PADDLE | Your paddle swells 60% for seven seconds |
 | DEEP FREEZE | Their paddle moves at half speed for four seconds |
 | TURBO | The ball jumps to 1.45× speed with a flame trail |
+| GHOST BALL | The ball goes near-invisible for four seconds, flashing briefly mid-court |
+| SHRINK RAY | Their paddle drops to 55% width for five seconds |
+| BEACH BALL | The ball inflates to 2.3× size, slow and floaty, for six seconds |
+
+The three chaos items keep a fairness valve each: the ghost ball is always
+visible in the last fifth of the court before either goal, so the save stays
+makeable rather than a coin flip; the shrink ray stacks multiplicatively with
+BIG PADDLE instead of overriding it; and the beach ball's speed is capped near
+serve pace while inflated (only AFTERBURN punches through), because a huge
+*fast* ball is not actually funny. GHOST BALL and BEACH BALL roll at weight 2
+against the others' 3–4 — they are punchlines, and punchlines wear out if they
+land every rally.
 
 With multiball live, a ball leaving the court still scores and is removed while
 the others keep playing, so a multiball can swing two or three points in one
@@ -244,6 +256,14 @@ no internet.
   flame when the ball is hot, full-screen colour washes on specials and goals,
   pixel text that pops and drifts off a milestone rally, and a CRT scanline and
   vignette pass over the whole thing — menus included.
+- **The celebrations** escalate with the stakes. Reaching match point adds a
+  red wash and a court-wide ring to the goal blast; three points in a row puts
+  an "N IN A ROW!" banner on the court and a pulsing ×N marker under the
+  scorer's score until the run ends; and winning the match fires a fireworks
+  volley plus a confetti rain — winner's phone only, falling toward whichever
+  screen edge is "down" in that player's flipped view. Confetti rides the
+  existing particle budget, so low-quality phones get a thinner rain rather
+  than a dropped frame.
 - **The audio** is synthesised live with Web Audio: square-wave lead, triangle
   bass and a noise hat over a four-bar loop in A minor, faster during a match
   than in the menus, plus about a dozen one-shot effects whose pitch rises with

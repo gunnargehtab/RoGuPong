@@ -102,8 +102,9 @@ slow, AEGIS — a barrier that saves one ball), **NEO** (small and fast, CURVE �
 bends the ball through the air), **BRIO** (heavy, QUAKE — slams every ball back
 and bogs the rival down).
 
-**Four item crates** drift through the middle of the court: multiball, big
-paddle, deep freeze, turbo. Hit one with the ball and the pickup is yours.
+**Seven item crates** drift through the middle of the court: multiball, big
+paddle, deep freeze, turbo, ghost ball, shrink ray and a giant beach ball.
+Hit one with the ball and the pickup is yours.
 
 **Four stages**, all somewhere in Milano: Navigli Night, Duomo Rooftop, Brera
 Arcade, Alpi Sunset.

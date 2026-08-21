@@ -6,7 +6,7 @@
 // so you are always the paddle at the bottom.
 
 import { drawText, measure } from '../ui/pixelfont.js';
-import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R } from './match.js';
+import { PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, ballRadius } from './match.js';
 
 const COURT_ASPECT = 0.56;      // width / height
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
@@ -372,18 +372,35 @@ export class Renderer {
 
   drawBalls(m, flip, chars, time) {
     const ctx = this.ctx;
-    const r = BALL_R * this.court.w;
     const live = new Set();
 
     for (const b of m.balls) {
       live.add(b.id);
+      const r = ballRadius(b) * this.court.w;
+      const hot = b.fire > 0;
+      const ghosted = b.ghost > 0;
+      const beachy = b.beach > 0;
+
+      // A ghost ball flickers: brief flashes mid-court, but always visible in
+      // the last stretch before either goal so the save stays makeable.
+      let alpha = 1;
+      if (ghosted) {
+        const nearGoal = b.y < 0.20 || b.y > 0.80;
+        const blink = Math.sin(time * 13 + b.id * 2.1) > 0.6;
+        alpha = nearGoal ? 0.85 : blink ? 0.4 : 0.05;
+      }
+
       let trail = this.trails.get(b.id);
       if (!trail) { trail = []; this.trails.set(b.id, trail); }
-      trail.push([b.x, b.y]);
-      const maxTrail = this.quality === 'low' ? 7 : 14;
-      while (trail.length > maxTrail) trail.shift();
+      if (ghosted) {
+        // A trail would give the ghost away.
+        trail.length = 0;
+      } else {
+        trail.push([b.x, b.y]);
+        const maxTrail = this.quality === 'low' ? 7 : 14;
+        while (trail.length > maxTrail) trail.shift();
+      }
 
-      const hot = b.fire > 0;
       const tint = hot ? '#ff9b4a' : '#ffffff';
       for (let i = 0; i < trail.length; i++) {
         const [tx, ty] = trail[i];
@@ -398,11 +415,25 @@ export class Renderer {
 
       const [sx, sy] = this.pt(b.x, b.y, flip);
       ctx.save();
-      this.glow(hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
-      ctx.fillStyle = hot ? '#ffd166' : '#ffffff';
-      ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-      ctx.fillStyle = hot ? '#fff3c4' : '#ffffff';
-      ctx.fillRect(sx - r * 0.45, sy - r * 0.9, r * 0.9, r * 0.5);
+      ctx.globalAlpha = alpha;
+      if (beachy) {
+        this.glow('#ff5b5b', 18);
+        const stripes = ['#ff5b5b', '#ffffff', '#ffd93b', '#ffffff', '#3da5ff'];
+        const sh = (r * 2) / stripes.length;
+        for (let i = 0; i < stripes.length; i++) {
+          ctx.fillStyle = stripes[i];
+          ctx.fillRect(sx - r, sy - r + i * sh, r * 2, Math.ceil(sh));
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillRect(sx - r * 0.55, sy - r * 0.8, r * 0.6, r * 0.3);
+      } else {
+        const body = ghosted ? '#c9a2ff' : hot ? '#ffd166' : '#ffffff';
+        this.glow(ghosted ? '#c9a2ff' : hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
+        ctx.fillStyle = body;
+        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+        ctx.fillStyle = ghosted ? '#e9dcff' : hot ? '#fff3c4' : '#ffffff';
+        ctx.fillRect(sx - r * 0.45, sy - r * 0.9, r * 0.9, r * 0.5);
+      }
       ctx.restore();
     }
 
@@ -444,6 +475,12 @@ export class Renderer {
         for (let k = 0; k < 4; k++) {
           ctx.fillRect(sx - w / 2 + (k + 0.5) * (w / 4) - 2, sy + h / 2 + 2, 4, 4);
         }
+      }
+      if (p.shrink > 0) {
+        // Pink pips off both ends: the shrink ray is on you.
+        ctx.fillStyle = '#ff8ae2';
+        ctx.fillRect(sx - w / 2 - 7, sy - 2, 4, 4);
+        ctx.fillRect(sx + w / 2 + 3, sy - 2, 4, 4);
       }
 
       if (p.shield > 0) {
@@ -525,6 +562,13 @@ export class Renderer {
       scale: topScore, color: '#ffffff', outline: '#1a0d2b',
       align: 'right', baseline: 'middle',
     });
+    const streak = m.streak || [0, 0];
+    if (streak[foe] >= 3) {
+      drawText(ctx, 'X' + streak[foe], this.W - pad, topH / 2 + topScore * 4.5, {
+        scale: Math.max(1, Math.round(topScore / 3)), color: '#ff9b4a',
+        align: 'right', baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
+      });
+    }
     const topMeterW = Math.max(60, this.W - pad * 2 - topScoreW - 18);
     this.meterBar(pad, topH * 0.10 + nameScale * 9 + subScale * 9 + 3,
       topMeterW, Math.max(6, nameScale * 2), m.meter[foe], chars[foe], time, false);
@@ -539,6 +583,12 @@ export class Renderer {
     drawText(ctx, String(m.scores[view]), pad, botY + botH * 0.46, {
       scale: botScore, color: '#ffffff', outline: '#1a0d2b', baseline: 'middle',
     });
+    if (streak[view] >= 3) {
+      drawText(ctx, 'X' + streak[view], pad, botY + botH * 0.46 + botScore * 4.5, {
+        scale: Math.max(1, Math.round(botScore / 3)), color: '#ff9b4a',
+        baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
+      });
+    }
 
     const textX = pad + scoreW + 14;
     drawText(ctx, names[view].slice(0, 9), textX, botY + botH * 0.16, {

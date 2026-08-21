@@ -16,7 +16,9 @@ import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 
-export const EMOTES = ['🔥', '😎', '😱', '🍕'];
+// Two grid rows of four. Indices ride the wire ({t:'emote', i}), so only ever
+// append — reordering would make old phones pop the wrong glyph.
+export const EMOTES = ['🔥', '😎', '😱', '🍕', '🤣', '👻', '🚀', '💩'];
 
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {

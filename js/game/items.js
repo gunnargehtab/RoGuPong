@@ -41,6 +41,33 @@ export const ITEMS = [
     duration: 0,
     weight: 3,
   },
+  {
+    id: 'ghost',
+    name: 'GHOST BALL',
+    glyph: '?',
+    blurb: 'Now you see it. Mostly you do not.',
+    color: '#c9a2ff',
+    duration: 4,
+    weight: 2,
+  },
+  {
+    id: 'shrink',
+    name: 'SHRINK RAY',
+    glyph: '-',
+    blurb: 'Their paddle gets tiny.',
+    color: '#ff8ae2',
+    duration: 5,
+    weight: 3,
+  },
+  {
+    id: 'beach',
+    name: 'BEACH BALL',
+    glyph: '0',
+    blurb: 'Huge, slow and impossible to take seriously.',
+    color: '#ff5b5b',
+    duration: 6,
+    weight: 2,
+  },
 ];
 
 export const itemById = (id) => ITEMS.find((i) => i.id === id) || ITEMS[0];
