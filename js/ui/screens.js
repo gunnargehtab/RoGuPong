@@ -551,7 +551,7 @@ export class Screens {
   /* Lobby                                                             */
 
   screenLobby(data) {
-    const { isHost, myChar, theirChar, theirName, theirReady, myReady, stage, target, rtt } = data;
+    const { isHost, myChar, theirChar, theirName, theirReady, myReady, stage, target, party, rtt } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('CHOOSE YOUR FIGHTER', { scale: 2 }));
@@ -627,7 +627,10 @@ export class Screens {
       ${isHost ? `<div class="row">
         <button class="btn small secondary" data-action="cycle-stage">Next stage</button>
         <button class="btn small secondary" data-action="cycle-target">First to ${target}</button>
-      </div>` : `<small class="muted">First to ${target}</small>`}`;
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small ${party ? '' : 'secondary'}" data-action="cycle-party">${party ? '🎉 Party mode' : 'Classic mode'}</button>
+      </div>` : `<small class="muted">First to ${target}${party ? ' · 🎉 PARTY MODE' : ''}</small>`}`;
     wrap.appendChild(stageSel);
 
     const emotes = document.createElement('div');

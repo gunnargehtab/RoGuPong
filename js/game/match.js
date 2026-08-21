@@ -28,6 +28,10 @@ const SERVE_DELAY = 1.15;
 const COUNTDOWN = 3.0;
 const CRATE_EVERY = [6.0, 9.5];
 const MAX_CRATES = 2;
+// Party mode: same game, chaos dial turned up. Crates rain, and up to three
+// share the court.
+const CRATE_EVERY_PARTY = [2.4, 4.0];
+const MAX_CRATES_PARTY = 3;
 const METER_PER_HIT = 0.17;
 const METER_PER_SEC = 0.022;
 
@@ -69,6 +73,7 @@ export class Match {
     this.chars = (opts.chars || ['ro', 'gu']).map(charById);
     this.stageId = opts.stage || 'navigli';
     this.target = opts.target || 7;
+    this.party = !!opts.party;
     this.rand = mulberry(opts.seed || 12345);
     this.names = opts.names || ['P1', 'P2'];
 
@@ -98,7 +103,7 @@ export class Match {
 
     this.balls = [];
     this.crates = [];
-    this.nextCrate = CRATE_EVERY[0] + this.rand() * (CRATE_EVERY[1] - CRATE_EVERY[0]);
+    this.nextCrate = this.rollCrateDelay();
     this.input = [{ x: 0.5, special: false }, { x: 0.5, special: false }];
     this.events = [];
     this.shake = 0;
@@ -125,6 +130,11 @@ export class Match {
   event(e) {
     this.events.push(e);
     if (this.events.length > 24) this.events.shift();
+  }
+
+  rollCrateDelay() {
+    const [lo, hi] = this.party ? CRATE_EVERY_PARTY : CRATE_EVERY;
+    return lo + this.rand() * (hi - lo);
   }
 
   /* ---------------------------------------------------------------- */
@@ -443,9 +453,11 @@ export class Match {
       if (c.y < 0.30 || c.y > 0.70) c.vy = -c.vy;
     }
     this.nextCrate -= dt;
-    if (this.nextCrate <= 0 && this.crates.length < MAX_CRATES && this.rally >= 2) {
-      this.nextCrate = CRATE_EVERY[0] + this.rand() * (CRATE_EVERY[1] - CRATE_EVERY[0]);
-      const item = rollItem(this.rand);
+    const maxCrates = this.party ? MAX_CRATES_PARTY : MAX_CRATES;
+    const minRally = this.party ? 1 : 2;
+    if (this.nextCrate <= 0 && this.crates.length < maxCrates && this.rally >= minRally) {
+      this.nextCrate = this.rollCrateDelay();
+      const item = rollItem(this.rand, this.party);
       this.crates.push({
         x: 0.18 + this.rand() * 0.64,
         y: 0.38 + this.rand() * 0.24,

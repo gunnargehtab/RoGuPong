@@ -43,6 +43,7 @@ class App {
     this.match = null;
     this.stage = STAGES[0];
     this.target = 7;
+    this.party = false;
     this.myChar = this.profile.char;
     this.theirChar = 'gu';
     this.theirName = '';
@@ -291,11 +292,12 @@ class App {
   /* ------------------------------------------------------------------ */
   /* Match lifecycle                                                     */
 
-  startMatch({ seed, stage, target, chars, mid }) {
+  startMatch({ seed, stage, target, chars, mid, party }) {
     this.stage = stageById(stage);
     this.target = target;
+    this.party = !!party;
     this.matchId = mid;
-    this.match = new Match({ chars, stage, target, seed });
+    this.match = new Match({ chars, stage, target, seed, party });
     this.finishing = false;
     this.pendingResult = null;
     this.simAccum = 0;
@@ -395,7 +397,7 @@ class App {
         char: this.myChar,
         matches: lb.allMatches().slice(-HISTORY_SHARED),
       });
-      if (peer.isHost) peer.send({ t: 'setup', stage: this.stage.id, target: this.target });
+      if (peer.isHost) peer.send(this.setupMsg());
       this.openLobby();
     });
     peer.on('msg', (msg) => this.onMessage(msg));
@@ -409,6 +411,10 @@ class App {
     this.go('lobby', this.lobbyData());
   }
 
+  setupMsg() {
+    return { t: 'setup', stage: this.stage.id, target: this.target, party: this.party };
+  }
+
   lobbyData() {
     return {
       isHost: this.peer.isHost,
@@ -419,6 +425,7 @@ class App {
       myReady: this.myReady,
       stage: this.stage.id,
       target: this.target,
+      party: this.party,
       rtt: this.peer.rtt,
     };
   }
@@ -441,6 +448,7 @@ class App {
         if (!this.peer.isHost) {
           this.stage = stageById(msg.stage);
           this.target = msg.target;
+          this.party = !!msg.party;
           this.refreshLobby();
         }
         break;
@@ -706,17 +714,22 @@ class App {
       case 'cycle-stage': {
         const i = STAGES.findIndex((s) => s.id === this.stage.id);
         this.stage = STAGES[(i + 1) % STAGES.length];
-        this.peer?.send({ t: 'setup', stage: this.stage.id, target: this.target });
+        this.peer?.send(this.setupMsg());
         this.refreshLobby();
         break;
       }
       case 'cycle-target': {
         const options = [5, 7, 11];
         this.target = options[(options.indexOf(this.target) + 1) % options.length];
-        this.peer?.send({ t: 'setup', stage: this.stage.id, target: this.target });
+        this.peer?.send(this.setupMsg());
         this.refreshLobby();
         break;
       }
+      case 'cycle-party':
+        this.party = !this.party;
+        this.peer?.send(this.setupMsg());
+        this.refreshLobby();
+        break;
       case 'ready':
         this.myReady = !this.myReady;
         this.peer?.send({ t: 'ready', v: this.myReady });
@@ -756,6 +769,7 @@ class App {
       seed: (Math.random() * 0xffffffff) >>> 0,
       stage: this.stage.id,
       target: this.target,
+      party: this.party,
       chars: [this.myChar, this.theirChar],
       mid: lb.newMatchId(),
     };

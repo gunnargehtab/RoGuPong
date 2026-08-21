@@ -119,6 +119,16 @@ With multiball live, a ball leaving the court still scores and is removed while
 the others keep playing, so a multiball can swing two or three points in one
 frantic exchange.
 
+**Party mode.** A lobby toggle (host's call, like stage and target) that turns
+the chaos dial without touching the tuned classic game: crates arrive every
+2.4–4 s instead of 6–9.5, three may share the court instead of two, the rally
+only needs one return before crates start, and multiball rolls at triple
+weight — a full court is the whole point. Everything else — physics, speeds,
+paddles, specials — is untouched, so party mode is the same game played in a
+hailstorm. It rides the `setup` and `start` messages like every other match
+parameter, and the leaderboard deliberately does not distinguish the two modes:
+one family table beats two half-empty ones.
+
 **Rally pressure.** Past twenty returns two things start happening: the speed
 ceiling creeps up (to about 2.4 court-heights/s) and both paddles shrink,
 losing up to a third of their width. It is symmetric, visible, and it means no
