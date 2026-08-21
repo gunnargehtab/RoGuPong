@@ -736,6 +736,13 @@ export class Renderer {
         scale: Math.max(1, scale * 0.6), color: 'rgba(255,255,255,0.7)',
         align: 'center', baseline: 'middle',
       });
+      if (m.party) {
+        const pulse = 0.6 + Math.sin(time * 6) * 0.4;
+        drawText(ctx, 'PARTY MODE', cx, cy + scale * 30, {
+          scale: Math.max(1, scale * 0.7), color: '#ffd93b', outline: '#1a0d2b',
+          align: 'center', baseline: 'middle', alpha: pulse,
+        });
+      }
     } else if (m.phase === 'point') {
       drawText(ctx, 'POINT', cx, cy, {
         scale: scale * 1.3, color: '#ffd93b', outline: '#1a0d2b',

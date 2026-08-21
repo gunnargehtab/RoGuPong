@@ -106,6 +106,10 @@ and bogs the rival down).
 paddle, deep freeze, turbo, ghost ball, shrink ray and a giant beach ball.
 Hit one with the ball and the pickup is yours.
 
+**Party mode** is a lobby toggle for when a clean duel is not the mood: crates
+rain three times as fast, three fit on the court at once, and multiball turns
+up far more often. Same physics, same specials — just played in a hailstorm.
+
 **Four stages**, all somewhere in Milano: Navigli Night, Duomo Rooftop, Brera
 Arcade, Alpi Sunset.
 

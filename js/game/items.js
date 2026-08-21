@@ -72,12 +72,16 @@ export const ITEMS = [
 
 export const itemById = (id) => ITEMS.find((i) => i.id === id) || ITEMS[0];
 
-/** Weighted pick, driven by the match's own RNG so both phones agree. */
-export function rollItem(rand) {
-  const total = ITEMS.reduce((s, i) => s + i.weight, 0);
+/**
+ * Weighted pick, driven by the match's own RNG so both phones agree. Party
+ * mode triples multiball's weight — a full court is the whole point.
+ */
+export function rollItem(rand, party = false) {
+  const w = (i) => (party && i.id === 'multi' ? i.weight * 3 : i.weight);
+  const total = ITEMS.reduce((s, i) => s + w(i), 0);
   let n = rand() * total;
   for (const item of ITEMS) {
-    n -= item.weight;
+    n -= w(item);
     if (n <= 0) return item;
   }
   return ITEMS[ITEMS.length - 1];
