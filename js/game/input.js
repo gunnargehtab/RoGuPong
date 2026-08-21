@@ -16,6 +16,7 @@ export class Input {
     this.special = false;
     this.touched = false;
     this.paddlePointer = null;
+    this.rect = null;
     this.keys = new Set();
     this.bind();
   }
@@ -31,11 +32,15 @@ export class Input {
   }
 
   local(e) {
-    const r = this.canvas.getBoundingClientRect();
+    // getBoundingClientRect forces layout; at pointermove rates on a slow
+    // phone that adds up. The canvas is full-screen and static, so measure on
+    // touch-down and reuse for the whole drag.
+    const r = this.rect || (this.rect = this.canvas.getBoundingClientRect());
     return [e.clientX - r.left, e.clientY - r.top];
   }
 
   onDown(e) {
+    this.rect = this.canvas.getBoundingClientRect();
     const [x, y] = this.local(e);
     if (this.renderer.hitSpecial(x, y)) {
       this.special = true;
@@ -95,5 +100,6 @@ export class Input {
     this.special = false;
     this.touched = false;
     this.paddlePointer = null;
+    this.rect = null;
   }
 }

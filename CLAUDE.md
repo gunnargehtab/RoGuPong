@@ -39,7 +39,7 @@ Anything that must not be lost goes on `ctl`; anything superseded by the next pa
 
 **Leaderboard without a server** (`js/data/leaderboard.js`): each phone keeps immutable match records with random ids in `localStorage`; on connect, phones exchange recent history and take the union. Host and guest build identical records from the shared match id (`App.buildRecord`), which is what makes the merge conflict-free.
 
-**Performance.** `App.sampleFrameRate` watches the real frame rate and stickily drops `renderer`/`fx` to a `low` quality path (persisted in the profile) if the phone can't hold ~45 fps.
+**Performance.** `App.sampleFrameRate` watches the real frame rate and stickily drops `renderer`/`fx` to a `low` quality path (persisted in the profile) if the phone can't hold ~45 fps — windows close on 45 frames or 1.5 s, whichever comes first, and one window under 32 fps demotes immediately. `low` renders at 1× DPR, blits a cached static backdrop instead of repainting it, and skips canvas shadows and the CRT pass; gradients are cached by key in both quality levels (`Renderer.grad`). DESIGN.md §9 explains the budget-phone rationale.
 
 ## Things to know when editing
 

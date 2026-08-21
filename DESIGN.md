@@ -299,6 +299,25 @@ wiped, as long as the other one has played those matches too.
 | The special press is dropped | It cannot be — it travels on the reliable channel |
 | Screen sleeps mid-match | Wake lock requested for the duration of the match |
 | No internet on the second visit | Service worker serves the whole game from cache |
+| The phone can't hold 45 fps | Demoted to the cheap render path within seconds, stickily (see below) |
+
+**The cheap render path.** A budget phone's GPU is fill-rate-bound, and the
+game's look is mostly full-screen fills, so `low` quality attacks exactly that:
+the canvas renders at 1× instead of device pixels (on a 720p phone that halves
+the pixels filled), the whole backdrop — sky, skylines, water — is painted once
+per stage into an offscreen canvas and blitted as a single composite instead of
+~a hundred fills a frame, canvas shadows (the single most expensive 2D feature
+on a weak GPU) are off, and the CRT scanline/vignette passes are skipped. The
+gameplay stays pixel-identical; only the dressing thins. Gradients everywhere
+are cached rather than rebuilt per frame, in both quality levels.
+
+The demotion watcher judges tumbling windows of 45 frames — or 1.5 s of wall
+clock, whichever comes first, so a phone crawling at a few fps is judged in a
+couple of seconds rather than after 45 slow frames. Two windows under 45 fps,
+or a single window under 32 fps, drop the profile to `low`; the choice is
+sticky for the session and persisted, so an old handset settles once. The
+canvas is also created `desynchronized`, letting Chrome present frames without
+waiting on the compositor — a real slice of touch-to-paddle latency on Android.
 
 ---
 
