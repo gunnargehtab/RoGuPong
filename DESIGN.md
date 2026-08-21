@@ -302,6 +302,18 @@ all derived from that list at render time.
 The practical effect is that the leaderboard survives even if one phone is
 wiped, as long as the other one has played those matches too.
 
+**Flair.** Cosmetic unlocks ride the same records. Four looks — RAINBOW (reach
+a 20-hit rally), FLAME (win ten matches), STARLIGHT (play all four stages),
+ROYAL (win without conceding) — are *computed* from the match history every
+time they are asked for, never written down when earned: records stay
+immutable, the merge stays conflict-free, and because histories are shared,
+flair earned on one phone is already earned on the other. The chosen flair
+lives in the profile and rides the `hello`/`pick` messages, so the rival's
+phone renders your look; in play it colours your paddle's trim and the trail
+of any ball you touched last, so a rally visibly trades ownership. There is no
+anti-cheat — a guest claims whatever flair it likes and the host draws it,
+because the threat model is two kids on a sofa.
+
 ---
 
 ## 9. Failure modes, and what happens

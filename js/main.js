@@ -46,6 +46,7 @@ class App {
     this.party = false;
     this.myChar = this.profile.char;
     this.theirChar = 'gu';
+    this.theirFlair = 'none';
     this.theirName = '';
     this.theirReady = false;
     this.myReady = false;
@@ -253,6 +254,7 @@ class App {
       time: this.menuTime,
       names: this.names(),
       chars: m.chars,
+      flairs: this.flairs(),
       localPaddleX: this.predictX,
       rtt: this.peer ? this.peer.rtt : 0,
       showTouchHint: !this.input.touched && m.phase === 'countdown',
@@ -287,6 +289,12 @@ class App {
     const mine = this.profile.name || 'YOU';
     const theirs = this.theirName || 'FRIEND';
     return this.view === 0 ? [mine, theirs] : [theirs, mine];
+  }
+
+  /** Flair by player index (0 host, 1 guest), for the renderer. */
+  flairs() {
+    const mine = this.profile.flair || 'none';
+    return this.view === 0 ? [mine, this.theirFlair] : [this.theirFlair, mine];
   }
 
   /* ------------------------------------------------------------------ */
@@ -360,7 +368,16 @@ class App {
         return;
       }
       const rec = this.pendingResult || this.buildRecord();
+      // A milestone crossed by this match unlocks its flair the moment the
+      // record lands — worth announcing over the results screen.
+      const before = lb.flairProgress(this.profile).unlocked;
       lb.recordMatch(rec);
+      const after = lb.flairProgress(this.profile).unlocked;
+      for (const f of lb.FLAIRS) {
+        if (!before[f.id] && after[f.id]) {
+          this.screens.toast(`✨ ${f.name} flair unlocked!`, 'good');
+        }
+      }
       this.pendingResult = null;
       this.keepAwake(false);
       audio.playMusic('menu');
@@ -395,6 +412,7 @@ class App {
         t: 'hello',
         name: this.profile.name || (peer.isHost ? 'HOST' : 'GUEST'),
         char: this.myChar,
+        flair: this.profile.flair,
         matches: lb.allMatches().slice(-HISTORY_SHARED),
       });
       if (peer.isHost) peer.send(this.setupMsg());
@@ -417,16 +435,18 @@ class App {
 
   lobbyData() {
     return {
-      isHost: this.peer.isHost,
+      isHost: !this.peer || this.peer.isHost,
       myChar: this.myChar,
       theirChar: this.theirChar,
       theirName: this.theirName,
       theirReady: this.theirReady,
       myReady: this.myReady,
+      myFlair: this.profile.flair,
+      flairProgress: lb.flairProgress(this.profile),
       stage: this.stage.id,
       target: this.target,
       party: this.party,
-      rtt: this.peer.rtt,
+      rtt: this.peer?.rtt || 0,
     };
   }
 
@@ -439,6 +459,7 @@ class App {
       case 'hello': {
         this.theirName = String(msg.name || '').slice(0, 10).toUpperCase();
         this.theirChar = charById(msg.char).id;
+        this.theirFlair = lb.flairById(msg.flair).id;
         const added = lb.mergeMatches(msg.matches);
         if (added) this.screens.toast(`Merged ${added} match${added === 1 ? '' : 'es'}`, 'good');
         this.refreshLobby();
@@ -454,6 +475,7 @@ class App {
         break;
       case 'pick':
         this.theirChar = charById(msg.char).id;
+        if (msg.flair != null) this.theirFlair = lb.flairById(msg.flair).id;
         this.refreshLobby();
         break;
       case 'ready':
@@ -708,9 +730,17 @@ class App {
       case 'pick-char':
         this.myChar = data.char;
         this.saveProfile();
-        this.peer?.send({ t: 'pick', char: this.myChar });
+        this.peer?.send({ t: 'pick', char: this.myChar, flair: this.profile.flair });
         this.refreshLobby();
         break;
+      case 'pick-flair': {
+        if (!lb.flairProgress(this.profile).unlocked[data.flair]) break;
+        this.profile.flair = lb.flairById(data.flair).id;
+        lb.saveProfile(this.profile);
+        this.peer?.send({ t: 'pick', char: this.myChar, flair: this.profile.flair });
+        this.refreshLobby();
+        break;
+      }
       case 'cycle-stage': {
         const i = STAGES.findIndex((s) => s.id === this.stage.id);
         this.stage = STAGES[(i + 1) % STAGES.length];

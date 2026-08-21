@@ -551,7 +551,7 @@ export class Screens {
   /* Lobby                                                             */
 
   screenLobby(data) {
-    const { isHost, myChar, theirChar, theirName, theirReady, myReady, stage, target, party, rtt } = data;
+    const { isHost, myChar, theirChar, theirName, theirReady, myReady, myFlair, flairProgress, stage, target, party, rtt } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('CHOOSE YOUR FIGHTER', { scale: 2 }));
@@ -613,6 +613,25 @@ export class Screens {
       <p style="margin-top:4px">${esc(chosen.special.desc)}</p>
       <p style="margin-top:6px"><small>${esc(chosen.blurb)}</small></p>`;
     wrap.appendChild(info);
+
+    if (flairProgress) {
+      const flairSel = document.createElement('div');
+      flairSel.className = 'panel tight';
+      const locked = lb.FLAIRS.filter((f) => !flairProgress.unlocked[f.id]);
+      flairSel.innerHTML = `
+        <div class="title-bar">
+          <h3>Flair</h3>
+          <small class="muted">earned by playing</small>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${lb.FLAIRS.map((f) => {
+    const open = flairProgress.unlocked[f.id];
+    return `<button class="btn small ${f.id === myFlair ? '' : 'secondary'}"
+              data-action="pick-flair" data-flair="${f.id}" ${open ? '' : 'disabled'}
+              title="${esc(f.hint)}">${open ? '' : '🔒 '}${esc(f.name)}</button>`;
+  }).join('')}</div>
+        ${locked.map((f) => `<small class="muted">🔒 ${esc(f.name)}: ${esc(f.hint)}</small><br>`).join('')}`;
+      wrap.appendChild(flairSel);
+    }
 
     const stageSel = document.createElement('div');
     stageSel.className = 'panel tight';

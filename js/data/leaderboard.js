@@ -29,6 +29,51 @@ function write(list) {
   }
 }
 
+/**
+ * Cosmetic flair, earned by playing. Unlocks are COMPUTED from the match
+ * history every time they are asked for — nothing is written when a milestone
+ * is reached, so records stay immutable and the merge stays conflict-free.
+ * Losing your phone loses nothing the shared history can't re-earn you.
+ */
+export const FLAIRS = [
+  { id: 'none', name: 'STANDARD', hint: 'The classic look — always yours' },
+  { id: 'rainbow', name: 'RAINBOW', hint: 'Reach a 20-hit rally' },
+  { id: 'flame', name: 'FLAME', hint: 'Win ten matches' },
+  { id: 'star', name: 'STARLIGHT', hint: 'Play on all four stages' },
+  { id: 'royal', name: 'ROYAL', hint: 'Win a match without conceding a point' },
+];
+
+export const flairById = (id) => FLAIRS.find((f) => f.id === id) || FLAIRS[0];
+
+/** My milestone stats and which flairs they unlock. Names match exactly, like standings(). */
+export function flairProgress(profile) {
+  const me = profile.name || 'YOU';
+  let wins = 0;
+  let bestRally = 0;
+  let shutouts = 0;
+  const stages = new Set();
+  for (const rec of read()) {
+    const idx = rec.players.findIndex((p) => p?.name === me);
+    if (idx === -1) continue;
+    bestRally = Math.max(bestRally, rec.bestRally || 0);
+    stages.add(rec.stage);
+    if (rec.winner === idx) {
+      wins++;
+      if ((rec.score?.[1 - idx] ?? 1) === 0) shutouts++;
+    }
+  }
+  return {
+    stats: { wins, bestRally, stages: stages.size, shutouts },
+    unlocked: {
+      none: true,
+      rainbow: bestRally >= 20,
+      flame: wins >= 10,
+      star: stages.size >= 4,
+      royal: shutouts >= 1,
+    },
+  };
+}
+
 export function loadProfile() {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
@@ -36,12 +81,13 @@ export function loadProfile() {
     return {
       name: p?.name || '',
       char: p?.char || 'ro',
+      flair: FLAIRS.some((f) => f.id === p?.flair) ? p.flair : 'none',
       music: p?.music !== false,
       sfx: p?.sfx !== false,
       quality: p?.quality === 'low' ? 'low' : 'high',
     };
   } catch {
-    return { name: '', char: 'ro', music: true, sfx: true, quality: 'high' };
+    return { name: '', char: 'ro', flair: 'none', music: true, sfx: true, quality: 'high' };
   }
 }
 
