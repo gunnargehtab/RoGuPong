@@ -182,6 +182,24 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       fx.ring(ev.x, ev.y, { color: '#ff56d0', to: 0.25, life: 0.6, width: 0.014 });
       fx.text(ev.x, ev.y - 0.06, 'CURVE', { color: '#ff8ae2', scale: 1.1 });
       break;
+    case 'phantom':
+      fx.ring(ev.x, ev.y, { color: '#9b7bff', to: 0.28, life: 0.7, width: 0.014 });
+      fx.burst(ev.x, ev.y, { count: 16, color: '#c9a2ff', color2: '#e0d4ff', speed: 0.5, spread: TAU, life: 0.6, gravity: 0.1 });
+      fx.text(ev.x, ev.y - 0.06, 'PHANTOM', { color: '#c9a2ff', scale: 1.1 });
+      break;
+    case 'catch':
+      fx.ring(ev.x, ev.y, { color: '#3ddc84', to: 0.2, life: 0.5, width: 0.012 });
+      fx.burst(ev.x, ev.y, { count: 14, color: '#3ddc84', color2: '#b8ffd9', speed: 0.45, spread: TAU, life: 0.45 });
+      fx.text(ev.x, ev.y + (ev.p === 0 ? -0.07 : 0.07), 'CAUGHT!', { color: '#b8ffd9', scale: 1.0 });
+      audio?.blip(520, 0.12, 'sine', 0.18);
+      break;
+    case 'fling': {
+      const dir = ev.p === 0 ? -Math.PI / 2 : Math.PI / 2;
+      fx.burst(ev.x, ev.y, { count: 24, color: '#3ddc84', color2: '#ffffff', speed: 0.9, spread: 1.4, dir, life: 0.55 });
+      fx.ring(ev.x, ev.y, { color: '#b8ffd9', to: 0.26, life: 0.4 });
+      audio?.hit(true, 0);
+      break;
+    }
     case 'shield':
       fx.burst(ev.x, ev.y, { count: 34, color: '#9df3ff', color2: '#ffffff', speed: 0.9, spread: 3.2, life: 0.7 });
       fx.ring(ev.x, ev.y, { color: '#9df3ff', to: 0.35, life: 0.5, width: 0.012 });

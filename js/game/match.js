@@ -34,6 +34,8 @@ const CRATE_EVERY_PARTY = [2.4, 4.0];
 const MAX_CRATES_PARTY = 3;
 const METER_PER_HIT = 0.17;
 const METER_PER_SEC = 0.022;
+const MAGNET_HOLD = 1.0;      // seconds a caught ball sits on the paddle
+const PHANTOM_GHOST = 3.0;    // seconds of ghost on a PHANTOM return
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -64,6 +66,10 @@ function makeBall(x, y, angle, speed, owner) {
     fire: 0,
     ghost: 0,       // seconds of near-invisibility left
     beach: 0,       // seconds of huge-and-floaty left
+    held: -1,       // player index holding it on a magnetic paddle, or -1
+    holdT: 0,
+    hx: 0,          // offset from the holding paddle's centre
+    catchX: 0,      // where the paddle was at the catch — the aim reference
     owner,          // last player to touch it — decides who gets an item crate
   };
 }
@@ -97,6 +103,7 @@ export class Match {
       frost: 0,
       shrink: 0,
       shield: 0,
+      magnet: 0,          // seconds the paddle stays magnetic, waiting for a ball
       pending: null,      // 'afterburn' | 'curve' armed for the next hit
       lastItem: null,
     }));
@@ -164,6 +171,7 @@ export class Match {
       p.grow = Math.max(0, p.grow - dt);
       p.frost = Math.max(0, p.frost - dt);
       p.shrink = Math.max(0, p.shrink - dt);
+      p.magnet = Math.max(0, p.magnet - dt);
       if (p.pending && p.pending.until <= this.time) p.pending = null;
       this.meter[i] = clamp(this.meter[i] + METER_PER_SEC * this.chars[i].meterRate * dt, 0, 1);
       if (this.input[i].special) {
@@ -232,6 +240,19 @@ export class Match {
       b.beach = Math.max(0, b.beach - dt);
       const rad = ballRadius(b);
 
+      // A caught ball rides the magnetic paddle until the hold runs out —
+      // no physics, no collisions, just aiming.
+      if (b.held >= 0) {
+        const p = this.paddles[b.held];
+        b.x = clamp(p.x + b.hx, rad, 1 - rad);
+        b.y = b.held === 0
+          ? PADDLE_Y[0] - PADDLE_H / 2 - rad
+          : PADDLE_Y[1] + PADDLE_H / 2 + rad;
+        b.holdT -= dt;
+        if (b.holdT <= 0) this.flingBall(b);
+        continue;
+      }
+
       if (b.spin !== 0) {
         b.vx += b.spin * dt * 0.55;
         b.spin *= Math.pow(0.55, dt);
@@ -281,6 +302,27 @@ export class Match {
     const offset = (b.x - p.x) / half;
     if (Math.abs(offset) > 1.12) return;         // edge whiff
 
+    // A magnetic paddle catches instead of bouncing. The catch counts as the
+    // return; the fling a second later is the aimed part.
+    if (p.magnet > 0) {
+      p.magnet = 0;
+      b.held = i;
+      b.holdT = MAGNET_HOLD;
+      b.hx = clamp(b.x - p.x, -half, half);
+      b.catchX = p.x;
+      b.y = surface;
+      b.vx = 0;
+      b.vy = 0;
+      b.spin = 0;
+      b.owner = i;
+      this.rally++;
+      this.bestRally = Math.max(this.bestRally, this.rally);
+      this.hitstop = 0.06;
+      this.shake = Math.max(this.shake, 0.5);
+      this.event({ t: 'catch', x: b.x, y: b.y, p: i });
+      return;
+    }
+
     b.y = surface;
     this.rally++;
     this.bestRally = Math.max(this.bestRally, this.rally);
@@ -302,7 +344,13 @@ export class Match {
 
     let big = false;
     const pending = p.pending;
-    if (pending && pending.id === 'afterburn') {
+    if (pending && pending.id === 'phantom') {
+      b.ghost = PHANTOM_GHOST;
+      b.speed = Math.min(MAX_SPEED, b.speed * 1.12);
+      p.pending = null;
+      big = true;
+      this.event({ t: 'phantom', x: b.x, y: b.y, p: i });
+    } else if (pending && pending.id === 'afterburn') {
       b.speed = Math.min(MAX_SPEED * 1.15, b.speed * 1.9);
       b.fire = 2.5;
       p.pending = null;
@@ -410,6 +458,25 @@ export class Match {
     b.vy = (b.vy / mag) * b.speed;
   }
 
+  /** The hold ran out: the caught ball leaves, aimed by the paddle's motion. */
+  flingBall(b) {
+    const i = b.held;
+    b.held = -1;
+    const p = this.paddles[i];
+    const dir = i === 0 ? -1 : 1;                // away from the flinger's goal
+    // The drag is the aim: however far the paddle moved since the catch sets
+    // the angle, so hauling the ball across the court slings a sharp diagonal
+    // and holding your ground fires it dead straight. Position, not velocity —
+    // no split-second flick timing required of a seven-year-old thumb.
+    const angle = clamp((p.x - b.catchX) * 2.4, -1.1, 1.1);
+    b.speed = Math.min(MAX_SPEED, Math.max(BASE_SPEED, b.speed) * 1.3);
+    if (b.beach > 0) b.speed = Math.min(b.speed, BASE_SPEED * 1.15);
+    b.vx = Math.sin(angle) * b.speed;
+    b.vy = Math.cos(angle) * b.speed * dir;
+    this.shake = Math.max(this.shake, 0.8);
+    this.event({ t: 'fling', x: b.x, y: b.y, p: i });
+  }
+
   fireSpecial(i) {
     if (this.phase !== 'play' || this.meter[i] < 1) return;
     const spec = this.chars[i].special;
@@ -419,14 +486,20 @@ export class Match {
     switch (spec.id) {
       case 'afterburn':
       case 'curve':
+      case 'phantom':
         p.pending = { id: spec.id, until: this.time + spec.duration };
         break;
       case 'aegis':
         p.shield = spec.duration;
         break;
+      case 'magnet':
+        p.magnet = spec.duration;
+        break;
       case 'quake': {
         const away = i === 0 ? -1 : 1;
         for (const b of this.balls) {
+          // A quake rips a caught ball straight off the rival's magnet.
+          if (b.held >= 0) { b.held = -1; b.vx = 0; b.vy = away; }
           b.speed = Math.min(MAX_SPEED, b.speed * 1.15);
           b.vy = Math.abs(b.vy) * away;
           b.spin = 0;
@@ -492,7 +565,7 @@ export class Match {
     this.phaseTime = SERVE_DELAY;
     this.crates = [];
     this.shake = 1.2;
-    for (const p of this.paddles) { p.shield = 0; p.pending = null; }
+    for (const p of this.paddles) { p.shield = 0; p.pending = null; p.magnet = 0; }
     this.event({
       t: 'goal', x: 0.5, y: loser === 0 ? 1 : 0, p: scorer, rally: this.rally,
       streak: this.streak[scorer],
@@ -523,11 +596,12 @@ export class Match {
       pd: this.paddles.map((p, i) => [
         +p.x.toFixed(4), +this.paddleWidth(i).toFixed(4),
         p.shield > 0 ? 1 : 0, p.frost > 0 ? 1 : 0, p.pending ? 1 : 0,
-        p.shrink > 0 ? 1 : 0,
+        p.shrink > 0 ? 1 : 0, p.magnet > 0 ? 1 : 0,
       ]),
       bl: this.balls.map((b) => [
         +b.x.toFixed(4), +b.y.toFixed(4), +b.vx.toFixed(3), +b.vy.toFixed(3),
         b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
+        b.held >= 0 ? 1 : 0,
       ]),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
       ev: this.events,
@@ -558,6 +632,7 @@ export class Match {
       pad.frost = p[3] ? 1 : 0;
       pad.pending = p[4] ? { id: this.chars[i].special.id, until: Infinity } : null;
       pad.shrink = p[5] ? 1 : 0;
+      pad.magnet = p[6] ? 1 : 0;
     });
 
     // Snapshots arrive at 30 Hz but we draw more often than that, so hard-
@@ -570,7 +645,7 @@ export class Match {
       const fresh = {
         id: b[5], x: b[0], y: b[1], vx: b[2], vy: b[3],
         speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0, owner: -1,
-        ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0,
+        ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0, held: b[8] ? 0 : -1, hx: 0,
       };
       if (!was) return fresh;
       const gap = Math.hypot(was.x - fresh.x, was.y - fresh.y);
