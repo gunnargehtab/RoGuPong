@@ -181,6 +181,7 @@ export class Renderer {
   draw(m, opts) {
     const {
       view = 0, stage, fx, time = 0, names = ['P1', 'P2'], chars,
+      flairs = ['none', 'none'],
       localPaddleX = null, rtt = 0, showTouchHint = false,
     } = opts;
     const ctx = this.ctx;
@@ -196,8 +197,8 @@ export class Renderer {
     this.drawBackdrop(stage, time, shake);
     this.drawCourt(m, stage, flip, chars, view, time);
     this.drawCrates(m, flip, time);
-    this.drawBalls(m, flip, chars, time);
-    this.drawPaddles(m, flip, chars, view, localPaddleX);
+    this.drawBalls(m, flip, chars, time, flairs);
+    this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time);
     this.drawFx(fx, flip);
     this.drawBanners(m, flip, chars, view, time);
     this.drawHud(m, chars, names, view, time, rtt);
@@ -429,7 +430,7 @@ export class Renderer {
     }
   }
 
-  drawBalls(m, flip, chars, time) {
+  drawBalls(m, flip, chars, time, flairs = ['none', 'none']) {
     const ctx = this.ctx;
     const live = new Set();
 
@@ -460,13 +461,22 @@ export class Renderer {
         while (trail.length > maxTrail) trail.shift();
       }
 
-      const tint = hot ? '#ff9b4a' : '#ffffff';
+      // The trail wears the flair of whoever last touched the ball, so your
+      // returns carry your look. Fire (turbo/afterburn) always outranks it.
+      const flair = b.owner >= 0 ? flairs[b.owner] : 'none';
       for (let i = 0; i < trail.length; i++) {
         const [tx, ty] = trail[i];
         const [sx, sy] = this.pt(tx, ty, flip);
         const f = i / trail.length;
-        ctx.globalAlpha = f * (hot ? 0.55 : 0.32);
-        ctx.fillStyle = hot ? (i % 2 ? '#ffd166' : '#ff5b2e') : tint;
+        let alpha = f * (hot ? 0.55 : 0.32);
+        let color = '#ffffff';
+        if (hot) color = i % 2 ? '#ffd166' : '#ff5b2e';
+        else if (flair === 'rainbow') { color = `hsl(${Math.round(f * 300 + time * 180) % 360} 90% 65%)`; alpha = f * 0.5; }
+        else if (flair === 'flame') { color = i % 2 ? '#ffd166' : '#ff7a3d'; alpha = f * 0.45; }
+        else if (flair === 'star') { color = '#ffffff'; alpha = f * (i % 3 === 0 ? 0.6 : 0.15); }
+        else if (flair === 'royal') { color = '#ffd93b'; alpha = f * 0.45; }
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
         const rr = r * (0.35 + f * 0.65);
         ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
       }
@@ -507,7 +517,7 @@ export class Renderer {
     for (const id of [...this.trails.keys()]) if (!live.has(id)) this.trails.delete(id);
   }
 
-  drawPaddles(m, flip, chars, view, localPaddleX) {
+  drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0) {
     const ctx = this.ctx;
     const c = this.court;
     for (let i = 0; i < 2; i++) {
@@ -530,6 +540,41 @@ export class Renderer {
       ctx.fillRect(sx - w / 2 + h * 0.3, sy - h / 2 + 1, w - h * 0.6, Math.max(1, h * 0.22));
       ctx.fillStyle = ch.color2;
       ctx.fillRect(sx - w * 0.12, sy - h * 0.12, w * 0.24, h * 0.24);
+
+      // Flair — the earned paddle skin. The court side is where the decoration
+      // goes, and the local player always sits at the bottom of the screen.
+      const flair = flairs[i];
+      const courtY = i === view ? sy - h / 2 : sy + h / 2;
+      const outward = i === view ? -1 : 1;
+      if (flair === 'rainbow') {
+        const seg = w / 6;
+        for (let k = 0; k < 6; k++) {
+          ctx.fillStyle = `hsl(${(k * 60 + Math.round(time * 120)) % 360} 90% 62%)`;
+          ctx.fillRect(sx - w / 2 + k * seg, sy + h * 0.14, Math.ceil(seg), Math.max(1, h * 0.2));
+        }
+      } else if (flair === 'flame') {
+        for (let k = 0; k < 4; k++) {
+          ctx.fillStyle = (k + Math.floor(time * 8)) % 2 ? '#ffd166' : '#ff7a3d';
+          const fh = 3 + ((k + Math.floor(time * 6)) % 2) * 2;
+          ctx.fillRect(sx - w / 2 + (k + 0.5) * (w / 4) - 2, courtY + (outward < 0 ? -fh - 1 : 1), 4, fh);
+        }
+      } else if (flair === 'star') {
+        ctx.fillStyle = '#ffffff';
+        for (let k = 0; k < 3; k++) {
+          ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(time * 4 + k * 2.1));
+          ctx.fillRect(sx - w / 2 + (k + 0.5) * (w / 3) - 1, sy - 1, 2, 2);
+        }
+        ctx.globalAlpha = 1;
+      } else if (flair === 'royal') {
+        ctx.strokeStyle = '#ffd93b';
+        ctx.lineWidth = 2;
+        roundRect(ctx, sx - w / 2 - 2, sy - h / 2 - 2, w + 4, h + 4, h * 0.5);
+        ctx.stroke();
+        ctx.fillStyle = '#ffd93b';
+        for (const [dx, dh] of [[-6, 3], [0, 5], [6, 3]]) {
+          ctx.fillRect(sx + dx - 1, courtY + (outward < 0 ? -dh - 2 : 2), 3, dh);
+        }
+      }
 
       if (p.grow > 0) {
         ctx.strokeStyle = '#ffd93b';

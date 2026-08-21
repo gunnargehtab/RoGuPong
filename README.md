@@ -112,6 +112,11 @@ Hit one with the ball and the pickup is yours.
 rain three times as fast, three fit on the court at once, and multiball turns
 up far more often. Same physics, same specials — just played in a hailstorm.
 
+**Flair** is earned, not bought: a rainbow trail for a 20-hit rally, flames
+for ten wins, starlight for touring all four stages, gold for a shutout. Pick
+yours in the lobby — your paddle wears it and every ball you return carries
+your trail, on both phones.
+
 **Four stages**, all somewhere in Milano: Navigli Night, Duomo Rooftop, Brera
 Arcade, Alpi Sunset.
 

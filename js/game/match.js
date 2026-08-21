@@ -601,7 +601,7 @@ export class Match {
       bl: this.balls.map((b) => [
         +b.x.toFixed(4), +b.y.toFixed(4), +b.vx.toFixed(3), +b.vy.toFixed(3),
         b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
-        b.held >= 0 ? 1 : 0,
+        b.held >= 0 ? 1 : 0, b.owner,
       ]),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
       ev: this.events,
@@ -644,7 +644,8 @@ export class Match {
       const was = previous.get(b[5]);
       const fresh = {
         id: b[5], x: b[0], y: b[1], vx: b[2], vy: b[3],
-        speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0, owner: -1,
+        speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0,
+        owner: b[9] ?? -1,      // who last touched it — drives the trail flair
         ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0, held: b[8] ? 0 : -1, hx: 0,
       };
       if (!was) return fresh;
