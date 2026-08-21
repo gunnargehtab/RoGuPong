@@ -58,7 +58,8 @@ class App {
     this.menuTime = 0;
     this.wakeLock = null;
     this.simAccum = 0;
-    this.fpsWindow = [];
+    this.fpsCount = 0;
+    this.fpsSum = 0;
     this.slowFrames = 0;
 
     audio.setMusic(this.profile.music);
@@ -151,18 +152,26 @@ class App {
    * Watch the real frame rate and drop the renderer to its cheap path if the
    * phone cannot keep up. Sticky for the session and remembered afterwards, so
    * an older handset settles once instead of oscillating between looks.
+   *
+   * Every laggy second before the switch is a second of mushy paddle, so this
+   * decides fast: a phone that is merely struggling gets a second opinion, one
+   * that is drowning is demoted on the first window. Windows close on elapsed
+   * time as well as frame count, so a phone crawling at a few fps doesn't take
+   * most of a minute to accumulate enough frames to be judged.
    */
   sampleFrameRate(dt) {
     if (this.profile.quality === 'low' || dt <= 0) return;
-    this.fpsWindow.push(dt);
-    if (this.fpsWindow.length > 90) this.fpsWindow.shift();
-    if (this.fpsWindow.length < 60) return;
-    const mean = this.fpsWindow.reduce((a, b) => a + b, 0) / this.fpsWindow.length;
+    this.fpsCount++;
+    this.fpsSum += dt;
+    if (this.fpsCount < 45 && !(this.fpsSum >= 1.5 && this.fpsCount >= 8)) return;
+    const mean = this.fpsSum / this.fpsCount;
+    this.fpsCount = 0;
+    this.fpsSum = 0;
+    if (mean > 1 / 32) { this.setQuality('low', true); return; }
     if (mean > 1 / 45) {
-      this.fpsWindow.length = 0;
-      this.slowFrames++;
       // Two bad windows in a row, so a one-off hitch does not demote a phone
       // that is actually fine.
+      this.slowFrames++;
       if (this.slowFrames >= 2) this.setQuality('low', true);
     } else {
       this.slowFrames = 0;
@@ -175,7 +184,8 @@ class App {
     lb.saveProfile(this.profile);
     this.renderer.setQuality(quality);
     this.fx.setQuality(quality);
-    this.fpsWindow.length = 0;
+    this.fpsCount = 0;
+    this.fpsSum = 0;
     this.slowFrames = 0;
     if (automatic && quality === 'low') {
       this.screens.toast('Switched to fast graphics for a smoother game');

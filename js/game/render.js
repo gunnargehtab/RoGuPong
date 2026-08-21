@@ -69,9 +69,15 @@ function roundRect(ctx, x, y, w, h, r) {
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    // desynchronized lets Chrome present the canvas without waiting on the
+    // compositor, which is a real chunk of the touch-to-paddle latency on
+    // Android. It is a hint: browsers that don't support it ignore it.
+    this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.trails = new Map();
     this.scanlines = null;
+    this.gradCache = new Map();
+    this.bgCache = null;
+    this.bgCacheFor = null;
     // 'high' draws the full 16-bit treatment. 'low' drops everything that costs
     // a lot of fill rate for a little polish — canvas shadows above all, which
     // are the single most expensive thing an older phone GPU can be asked to do
@@ -98,8 +104,20 @@ export class Renderer {
     this.ctx.shadowBlur = blur;
   }
 
+  /**
+   * Per-frame gradients are surprisingly costly on weak devices — cache them
+   * by key. Cleared on resize, and stage/character changes alter the keys.
+   */
+  grad(key, make) {
+    let g = this.gradCache.get(key);
+    if (!g) { g = make(); this.gradCache.set(key, g); }
+    return g;
+  }
+
   resize() {
-    const cap = this.quality === 'low' ? 1.5 : 2;
+    // 'low' renders at 1x. On a 720p phone that halves every pixel the GPU
+    // has to fill, and the chunkier look suits the game anyway.
+    const cap = this.quality === 'low' ? 1 : 2;
     const dpr = Math.min(window.devicePixelRatio || 1, cap);
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
@@ -114,6 +132,9 @@ export class Renderer {
     this.vignette = null;
     this.skyGradient = null;
     this.skyGradientFor = null;
+    this.gradCache.clear();
+    this.bgCache = null;
+    this.bgCacheFor = null;
     this.layout();
   }
 
@@ -185,17 +206,44 @@ export class Renderer {
   /* ---------------------------------------------------------------- */
   /* Backdrop                                                          */
 
+  /**
+   * The backdrop is most of the fill rate a frame costs, and in 'low' none of
+   * its animation (parallax drift, star twinkle, window flicker) is worth
+   * that. Paint it once per stage and size into an offscreen canvas and blit —
+   * one composite instead of a hundred fills.
+   */
   drawBackdrop(stage, time, shake) {
-    const ctx = this.ctx;
-    if (!this.skyGradient || this.skyGradientFor !== stage.id) {
-      const g = ctx.createLinearGradient(0, 0, 0, this.H);
-      g.addColorStop(0, stage.sky[0]);
-      g.addColorStop(0.55, stage.sky[1]);
-      g.addColorStop(1, stage.sky[2]);
-      this.skyGradient = g;
-      this.skyGradientFor = stage.id;
+    if (this.quality === 'low') {
+      const M = SHAKE_MARGIN;
+      const key = stage.id + ':' + this.W + 'x' + this.H;
+      if (this.bgCacheFor !== key) {
+        const off = document.createElement('canvas');
+        off.width = Math.ceil((this.W + M * 2) * this.dpr);
+        off.height = Math.ceil((this.H + M * 2) * this.dpr);
+        const octx = off.getContext('2d', { alpha: false });
+        octx.setTransform(this.dpr, 0, 0, this.dpr, M * this.dpr, M * this.dpr);
+        this.paintBackdrop(octx, stage, 0, 0);
+        this.bgCache = off;
+        this.bgCacheFor = key;
+      }
+      this.ctx.drawImage(this.bgCache, -M, -M, this.W + M * 2, this.H + M * 2);
+      return;
     }
-    ctx.fillStyle = this.skyGradient;
+    this.paintBackdrop(this.ctx, stage, time, shake);
+  }
+
+  paintBackdrop(ctx, stage, time, shake) {
+    let sky;
+    if (ctx === this.ctx) {
+      if (!this.skyGradient || this.skyGradientFor !== stage.id) {
+        this.skyGradient = this.makeSky(ctx, stage);
+        this.skyGradientFor = stage.id;
+      }
+      sky = this.skyGradient;
+    } else {
+      sky = this.makeSky(ctx, stage);
+    }
+    ctx.fillStyle = sky;
     // Overdraw the edges: screen shake translates the canvas, and a backdrop
     // that stopped at the old bounds would leave the previous frame showing in
     // the gap.
@@ -216,13 +264,13 @@ export class Renderer {
     }
 
     const drift = Math.sin(time * 0.12) * this.W * 0.012;
-    this.drawSkyline(stage.far, drift * 0.5 + shake * 3, time);
-    this.drawSkyline(stage.near, drift + shake * 6, time);
+    this.drawSkyline(ctx, stage.far, drift * 0.5 + shake * 3, time);
+    this.drawSkyline(ctx, stage.near, drift + shake * 6, time);
 
     if (stage.water) {
       const wy = stage.water.top * this.H;
       ctx.fillStyle = stage.water.color;
-      ctx.fillRect(0, wy, this.W, this.H - wy);
+      ctx.fillRect(-SHAKE_MARGIN, wy, this.W + SHAKE_MARGIN * 2, this.H - wy + SHAKE_MARGIN);
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = stage.water.shimmer;
       const shimmer = this.quality === 'low' ? 8 : 26;
@@ -236,9 +284,16 @@ export class Renderer {
     }
   }
 
-  drawSkyline(layer, offset, time) {
+  makeSky(ctx, stage) {
+    const g = ctx.createLinearGradient(0, 0, 0, this.H);
+    g.addColorStop(0, stage.sky[0]);
+    g.addColorStop(0.55, stage.sky[1]);
+    g.addColorStop(1, stage.sky[2]);
+    return g;
+  }
+
+  drawSkyline(ctx, layer, offset, time) {
     if (!layer) return;
-    const ctx = this.ctx;
     const baseY = layer.y * this.H;
     ctx.fillStyle = layer.color;
     for (const s of layer.shapes) {
@@ -317,10 +372,12 @@ export class Renderer {
     for (let i = 0; i < 2; i++) {
       const atBottom = (i === view);
       const gy = atBottom ? c.y + c.h - c.h * 0.012 : c.y;
-      const grad = ctx.createLinearGradient(0, gy, 0, gy + (atBottom ? -c.h * 0.09 : c.h * 0.09));
-      grad.addColorStop(0, chars[i].color + 'cc');
-      grad.addColorStop(1, chars[i].color + '00');
-      ctx.fillStyle = grad;
+      ctx.fillStyle = this.grad(`goal:${chars[i].color}:${gy}:${atBottom}`, () => {
+        const grad = ctx.createLinearGradient(0, gy, 0, gy + (atBottom ? -c.h * 0.09 : c.h * 0.09));
+        grad.addColorStop(0, chars[i].color + 'cc');
+        grad.addColorStop(1, chars[i].color + '00');
+        return grad;
+      });
       ctx.fillRect(c.x, atBottom ? gy - c.h * 0.09 : gy, c.w, c.h * 0.09 + c.h * 0.012);
       ctx.fillStyle = chars[i].color;
       ctx.fillRect(c.x, atBottom ? c.y + c.h - 3 : c.y, c.w, 3);
@@ -485,11 +542,13 @@ export class Renderer {
 
       if (p.shield > 0) {
         const [, shy] = this.pt(0.5, SHIELD_Y[i], flip);
-        const grad = ctx.createLinearGradient(0, shy - 8, 0, shy + 8);
-        grad.addColorStop(0, ch.color2 + '00');
-        grad.addColorStop(0.5, ch.color2 + 'dd');
-        grad.addColorStop(1, ch.color2 + '00');
-        ctx.fillStyle = grad;
+        ctx.fillStyle = this.grad(`shield:${shy}:${ch.color2}`, () => {
+          const grad = ctx.createLinearGradient(0, shy - 8, 0, shy + 8);
+          grad.addColorStop(0, ch.color2 + '00');
+          grad.addColorStop(0.5, ch.color2 + 'dd');
+          grad.addColorStop(1, ch.color2 + '00');
+          return grad;
+        });
         ctx.fillRect(c.x, shy - 8, c.w, 16);
         ctx.fillStyle = ch.color2;
         for (let k = 0; k < 14; k++) ctx.fillRect(c.x + (k + 0.5) * (c.w / 14) - 2, shy - 2, 4, 4);
@@ -638,10 +697,12 @@ export class Renderer {
     const full = value >= 1;
     ctx.save();
     if (full) this.glow(char.color2, 10 + Math.sin(time * 9) * 6);
-    const grad = ctx.createLinearGradient(x, 0, x + w, 0);
-    grad.addColorStop(0, char.color);
-    grad.addColorStop(1, char.color2);
-    ctx.fillStyle = grad;
+    ctx.fillStyle = this.grad(`meter:${x}:${w}:${char.color}`, () => {
+      const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+      grad.addColorStop(0, char.color);
+      grad.addColorStop(1, char.color2);
+      return grad;
+    });
     roundRect(ctx, x, y, Math.max(2, w * value), h, h / 2);
     ctx.fill();
     ctx.restore();
