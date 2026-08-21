@@ -31,7 +31,7 @@ Deployment is GitHub Pages serving straight from `main`; every push to `main` re
 - `ctl` — reliable + ordered: lobby messages, character picks, special presses, match start/result, emotes. Handled in `App.onMessage` (typed `{t: ...}` messages).
 - `state` — unreliable + unordered: 30 Hz snapshots and paddle inputs, discarded if older than the last applied tick. Handled in `App.onState`.
 
-Anything that must not be lost goes on `ctl`; anything superseded by the next packet goes on `state`.
+Anything that must not be lost goes on `ctl`; anything superseded by the next packet goes on `state`. The full `ctl` vocabulary is the switch in `App.onMessage`: `hello` (name, character, shared match history), `setup`, `pick`, `ready`, `start`, `sp` (guest special press), `result`, `rematch`, `emote`, `bye`. `ping`/`pong` never reach `App` — `peer.js` consumes them to measure `peer.rtt` and as a heartbeat (every 1.5 s; 8 s of silence drops the connection, which lands both phones on the `lost` screen via `App.onDrop`).
 
 **Signalling is optical.** `js/net/sdp.js` compresses a ~1.2 KB SDP offer to a ~117-char code by extracting only what differs between ends (ICE credentials, DTLS fingerprint, candidates), packing binary and Base32-encoding — prefix `RGP`. If the compact round-trip self-check fails it falls back to deflate-compressed full SDP, prefix `RGX`. `js/net/qr.js` is a complete from-scratch QR encoder; `js/net/scanner.js` scans via the Barcode Detection API (Chromium-only). ICE gathering is treated as settled 0.4 s after the last candidate (3 s hard cap) so internet-less networks don't stall. While the host's invite is on screen its camera is already scanning for the guest's reply, so the second scan needs no tap; codes can also be shared as text (Web Share API) and auto-connect when pasted.
 
@@ -45,5 +45,6 @@ Anything that must not be lost goes on `ctl`; anything superseded by the next pa
 
 - **`sw.js` precache list**: every file the game loads must be listed in `ASSETS`, so adding or renaming a JS/CSS file means updating `sw.js` too. Fetch is network-first with cache fallback, so redeploys are picked up automatically.
 - **DESIGN.md is the source of truth for tuning.** Every physics constant (paddle speed 2.35, speed ramp ×1.035, rally-pressure shrink, meter rates…) was deliberately balanced — the file explains why each number is what it is. Read the relevant section before changing gameplay values, and keep the doc in sync with the code.
+- **Matches are set up entirely by the host's `start` message** (`App.hostStart`): seed, stage, target, characters, match id — both phones construct their `Match` from it. Inside the simulation all randomness goes through the seeded PRNG (`this.rand`, mulberry32), never `Math.random`, so serves and crate rolls stay tied to the shared seed.
 - Both `README.md` and `DESIGN.md` describe behavior in detail; user-visible changes usually need a matching edit there.
 - In-game text renders through the 58-glyph 5×7 bitmap font in `js/ui/pixelfont.js`; new glyphs must be added there before they can appear on the canvas.
