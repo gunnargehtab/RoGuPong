@@ -14,7 +14,7 @@ import { Match } from './game/match.js';
 import { byId as charById } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
 import { Peer } from './net/peer.js';
-import { extractCode } from './net/sdp.js';
+import { extractCode, inviteLink, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 
@@ -101,7 +101,7 @@ class App {
     // that is long over.
     history.replaceState(null, '', location.pathname + location.search);
 
-    if (!/^RG[PX][A-Z2-7]+$/.test(code)) {
+    if (!CODE_RE.test(code)) {
       this.screens.toast('That invite link looks damaged', 'bad');
       return;
     }
@@ -376,6 +376,7 @@ class App {
   attachPeer(peer) {
     this.peer = peer;
     peer.on('open', () => {
+      this.stopScanner();
       audio.blip(880, 0.1);
       this.screens.toast('Connected', 'good');
       peer.send({
@@ -511,10 +512,22 @@ class App {
     try {
       const peer = await Peer.host();
       this.attachPeer(peer);
-      this.go('host', { stage: 'code', code: peer.code });
+      this.showHostCode();
     } catch (err) {
       this.screens.toast('Could not start: ' + err.message, 'bad');
       this.go('connect');
+    }
+  }
+
+  /**
+   * The invite screen doubles as the reply scanner: the camera runs while the
+   * code is showing, so once the guest holds up their reply the host only has
+   * to point the phone at it — no extra tap in between.
+   */
+  showHostCode() {
+    this.go('host', { stage: 'code', code: this.peer?.code });
+    if (scannerSupported()) {
+      requestAnimationFrame(() => this.startScanner((code) => this.acceptAnswer(code)));
     }
   }
 
@@ -534,10 +547,11 @@ class App {
   async acceptAnswer(code) {
     try {
       await this.peer.acceptAnswer(code);
+      this.stopScanner();
       this.go('host', { stage: 'waiting' });
     } catch (err) {
       this.screens.toast('Reply rejected: ' + err.message, 'bad');
-      this.go('host', { stage: 'code', code: this.peer.code });
+      this.showHostCode();
     }
   }
 
@@ -554,7 +568,38 @@ class App {
     }, () => { /* a frame failed to decode; the next one will do */ })
       .catch((err) => {
         this.screens.toast('Camera unavailable: ' + err.message, 'bad');
+        // Don't leave a dead black preview sitting on the screen.
+        document.getElementById('camera')?.remove();
       });
+  }
+
+  async shareCode(kind) {
+    const code = this.peer?.code;
+    if (!code || !navigator.share) return;
+    try {
+      // The invite travels as a link so the friend just taps it and the game
+      // joins itself; the reply stays a bare code, because tapping a link
+      // would navigate the host away from its own live connection.
+      if (kind === 'link') {
+        await navigator.share({ title: 'RoGuPong', url: inviteLink(code) });
+      } else {
+        await navigator.share({ text: code });
+      }
+    } catch { /* the user closed the share sheet */ }
+  }
+
+  async pasteFromClipboard(next) {
+    try {
+      const code = extractCode(await navigator.clipboard.readText());
+      if (!CODE_RE.test(code)) {
+        this.screens.toast('No RoGuPong code in the clipboard', 'bad');
+        return;
+      }
+      if (next === 'use-answer') this.acceptAnswer(code);
+      else this.beginJoin(code);
+    } catch {
+      this.screens.toast('Clipboard unavailable — long-press the box and paste', 'bad');
+    }
   }
 
   stopScanner() {
@@ -623,14 +668,6 @@ class App {
         if (v) this.beginJoin(v);
         break;
       }
-      case 'host-scan':
-        if (scannerSupported()) {
-          this.go('host', { stage: 'scan' });
-          requestAnimationFrame(() => this.startScanner((code) => this.acceptAnswer(code)));
-        } else {
-          this.go('pasteAnswer');
-        }
-        break;
       case 'paste-answer': this.stopScanner(); this.go('pasteAnswer'); break;
       case 'use-answer': {
         const v = document.getElementById('paste-input')?.value.trim();
@@ -639,9 +676,11 @@ class App {
       }
       case 'host-back':
         this.stopScanner();
-        this.go('host', { stage: 'code', code: this.peer?.code });
+        this.showHostCode();
         break;
       case 'copy-code': this.copyCode(); break;
+      case 'share-code': this.shareCode(data.share); break;
+      case 'clip-paste': this.pasteFromClipboard(data.next); break;
       case 'cancel':
         this.stopScanner();
         this.leave(true);

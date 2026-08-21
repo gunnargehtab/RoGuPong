@@ -172,14 +172,21 @@ back to shipping the whole SDP deflate-compressed, which produces a denser code
 that still works.
 
 The handshake is therefore: **host shows a code → guest scans it → guest shows
-a reply → host scans that**. Two scans, no typing, no server. Every step also
-offers the code as text, so two friends can paste it to each other in any chat
-app if a camera is unavailable — which is also the fallback on any browser
-without the Barcode Detection API.
+a reply → host scans that**. Two scans, no typing, no server. The host's camera
+runs *while its invite is on screen*, so the second scan needs no tap at all:
+the moment the guest holds up the reply, pointing the host phone at it is the
+whole remaining step. Every step also offers the code as text with a share
+button, so two friends can send it to each other in any chat app if a camera
+is unavailable — which is also the fallback on any browser without the Barcode
+Detection API. A shared invite travels as a link the friend just taps, and a
+pasted code connects the instant it lands in the box.
 
 STUN servers are configured but unused on a shared WiFi, where local candidates
-win immediately. ICE gathering is capped at three seconds so a network with no
-internet behind it never stalls the handshake.
+win immediately. ICE gathering is treated as settled 0.4 s after the last
+candidate arrives, with a three-second hard cap: a WiFi with no internet behind
+it never reaches "complete" — its STUN requests just vanish — so waiting for
+the cap on both phones used to add six seconds of dead air to every handshake.
+Local candidates arrive within milliseconds and are the ones that connect.
 
 ### iPhones
 
@@ -264,7 +271,8 @@ wiped, as long as the other one has played those matches too.
 | --- | --- |
 | No camera / no Barcode Detection API | Falls back to copy-and-paste codes, and says so up front |
 | Compact SDP encoding not viable | Silently ships the full description, compressed |
-| ICE gathering stalls (no internet) | Capped at 3 s; local candidates are enough |
+| ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
+| Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Connection fails cleanly with a note suggesting a hotspot |
 | Connection drops mid-match | Heartbeat notices within 8 s and shows a link-lost screen |
 | A snapshot arrives late | Discarded by tick number |

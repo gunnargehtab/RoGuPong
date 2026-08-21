@@ -5,9 +5,7 @@
 // the UI falls back to pasting the code, which is why every failure here is
 // reported rather than thrown into the void.
 
-import { extractCode } from './sdp.js';
-
-const CODE_RE = /^RG[PX][A-Z2-7]+$/;
+import { extractCode, CODE_RE } from './sdp.js';
 
 export function scannerSupported() {
   return typeof window !== 'undefined'
