@@ -26,6 +26,11 @@ const INPUT_HZ = 30;
 const FIXED_STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 6;
 const HISTORY_SHARED = 80;      // how many past matches to hand the other phone
+// How far back predictPaddle remembers where our own paddle has been. Sized to
+// cover the whole staleness of the echoed paddle position with room to spare:
+// input send interval + RTT + host frame (and its up-to-6-step backlog) +
+// snapshot interval + a 30 Hz low-power-mode guest frame is ~0.25 s at worst.
+const PREDICT_MEMORY = 0.45;
 
 class App {
   constructor() {
@@ -56,6 +61,8 @@ class App {
     this.netAccum = 0;
     this.simAccum = 0;
     this.predictX = 0.5;
+    this.predictLog = [];
+    this.lastSnapAt = -Infinity;
     this.lastFrame = performance.now();
     this.menuTime = 0;
     this.wakeLock = null;
@@ -224,14 +231,23 @@ class App {
 
       this.netAccum += dt;
       if (this.peer && this.netAccum >= 1 / SNAPSHOT_HZ) {
-        this.netAccum = 0;
-        this.peer.sendState(m.snapshot());
+        // Subtract the interval instead of zeroing: zeroing rounds the send
+        // cadence up to whole frames, which quietly stretches 30 Hz to 22 Hz
+        // on a phone rendering at 45 fps — extra echo lag exactly when the
+        // phone is already struggling. Capped so a long stall can't bank a
+        // burst of sends.
+        this.netAccum = Math.min(this.netAccum - 1 / SNAPSHOT_HZ, 1 / SNAPSHOT_HZ);
+        // Build the snapshot only if it will actually go out: snapshot()
+        // flushes the event outbox, and events are the one thing in the state
+        // stream the next packet does not supersede. Held back, they simply
+        // ride the next snapshot that does send.
+        if (!this.peer.stateBackedUp()) this.peer.sendState(m.snapshot());
       }
     } else {
       if (this.input.takeSpecial()) this.peer.send({ t: 'sp' });
       this.netAccum += dt;
       if (this.netAccum >= 1 / INPUT_HZ) {
-        this.netAccum = 0;
+        this.netAccum = Math.min(this.netAccum - 1 / INPUT_HZ, 1 / INPUT_HZ);
         this.peer.sendState({ k: 'i', x: +this.input.x.toFixed(4) });
       }
       m.extrapolate(dt);
@@ -267,13 +283,41 @@ class App {
   predictPaddle(dt) {
     const m = this.match;
     const i = this.view;
-    const half = m.paddleWidth(i) / 2;
+    const p = m.paddles[i];
+    // Clamp inside the width the host is actually using — netWidth carries
+    // grow, which is not otherwise synced — so prediction can never slide the
+    // paddle closer to a wall than the authority allows.
+    const half = (p.netWidth != null ? p.netWidth : m.paddleWidth(i)) / 2;
     const target = Math.max(half, Math.min(1 - half, this.input.x));
     const max = m.paddleSpeed(i) * dt;
     this.predictX += Math.max(-max, Math.min(max, target - this.predictX));
-    const server = m.paddles[i].x;
-    if (Math.abs(server - this.predictX) > 0.14) this.predictX = server;
-    else this.predictX += (server - this.predictX) * Math.min(1, dt * 2.5);
+
+    // Reconciliation. The echoed paddle position is a whole network round
+    // stale: it says where the paddle WAS ~60–130 ms ago, not where it is.
+    // Judging it against the current position alone reads that lag as desync —
+    // after every sharp reversal the two diverge at twice the paddle speed,
+    // cross the snap threshold within a few frames, and the paddle teleports
+    // backwards off the thumb: a twitch, worst on the laggiest phones and
+    // networks. So the echo is compared against the whole
+    // span the paddle has covered recently: an echo inside that span is merely
+    // the past and needs no fixing. Only the distance beyond the span is
+    // genuine desync — a lost input burst, a clamp mismatch — eased away
+    // gently, or snapped when it is too big to ease.
+    const log = this.predictLog;
+    log.push({ t: this.menuTime, x: this.predictX });
+    while (log.length && log[0].t < this.menuTime - PREDICT_MEMORY) log.shift();
+
+    // No fresh authority, no correction: during a snapshot stall the echo is
+    // frozen, and on the host (which never applies snapshots) the simulation
+    // chases the same finger this does — either way there is nothing to learn.
+    if (this.menuTime - this.lastSnapAt > PREDICT_MEMORY) return;
+
+    let lo = this.predictX, hi = this.predictX;
+    for (const h of log) { if (h.x < lo) lo = h.x; else if (h.x > hi) hi = h.x; }
+    const server = p.x;
+    const err = server < lo ? server - lo : server > hi ? server - hi : 0;
+    if (Math.abs(err) > 0.14) this.predictX = server;
+    else if (err) this.predictX += err * Math.min(1, dt * 2.5);
   }
 
   countdownBeeps(m) {
@@ -310,6 +354,9 @@ class App {
     this.pendingResult = null;
     this.simAccum = 0;
     this.predictX = 0.5;
+    this.predictLog.length = 0;
+    this.lastSnapAt = -Infinity;
+    this.guestInput.x = 0.5;
     this.netAccum = 0;
     this.myRematch = false;
     this.theirRematch = false;
@@ -517,7 +564,7 @@ class App {
     if (msg.k === 'i') {
       this.guestInput.x = msg.x;
     } else if (msg.k === 's' && !this.peer.isHost) {
-      this.match.applySnapshot(msg);
+      if (this.match.applySnapshot(msg)) this.lastSnapAt = this.menuTime;
     }
   }
 

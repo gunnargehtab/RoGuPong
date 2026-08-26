@@ -113,6 +113,7 @@ export class Match {
     this.nextCrate = this.rollCrateDelay();
     this.input = [{ x: 0.5, special: false }, { x: 0.5, special: false }];
     this.events = [];
+    this.outbox = [];
     this.shake = 0;
     this.hitstop = 0;
   }
@@ -134,9 +135,14 @@ export class Match {
     return PADDLE_SPEED * this.chars[i].speed * (p.frost > 0 ? 0.5 : 1);
   }
 
+  // Local fx (drainEvents) and the network (snapshot) each get their own copy;
+  // a single shared queue had them stealing events from each other, so every
+  // hit spark and goal boom played on only one of the two phones.
   event(e) {
     this.events.push(e);
+    this.outbox.push(e);
     if (this.events.length > 24) this.events.shift();
+    if (this.outbox.length > 24) this.outbox.shift();
   }
 
   rollCrateDelay() {
@@ -604,15 +610,16 @@ export class Match {
         b.held >= 0 ? 1 : 0, b.owner,
       ]),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
-      ev: this.events,
+      ev: this.outbox,
       sh: +this.shake.toFixed(2),
     };
-    this.events = [];
+    this.outbox = [];
     return snap;
   }
 
+  /** Returns whether the snapshot was applied (stale ticks are discarded). */
   applySnapshot(s) {
-    if (s.n <= this.tick) return;      // an unreliable channel reorders packets
+    if (s.n <= this.tick) return false;    // an unreliable channel reorders packets
     this.tick = s.n;
     this.phase = s.ph;
     this.phaseTime = s.pt;
@@ -660,6 +667,7 @@ export class Match {
     }));
 
     for (const e of s.ev) this.events.push(e);
+    return true;
   }
 
   /** Guest-side smoothing between the 30 Hz snapshots. */

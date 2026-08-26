@@ -18,6 +18,10 @@ const ICE_SERVERS = [
 
 const GATHER_TIMEOUT_MS = 3000;
 const GATHER_SETTLE_MS = 400;
+// Unsent state bytes allowed to queue before new packets are dropped at the
+// source — about five snapshots, past which the radio is stalling and every
+// queued packet is stale by the time it leaves.
+const STATE_BACKLOG_MAX = 4096;
 
 function waitForIceGathering(pc) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -185,8 +189,23 @@ export class Peer {
   /** Reliable, ordered. Menus, picks, results — anything that must arrive. */
   send(msg) { return this.raw(this.ctl, msg); }
 
-  /** Unreliable. Snapshots and inputs, where the next packet supersedes this one. */
-  sendState(msg) { return this.raw(this.state, msg); }
+  /** The radio can't keep up with the state stream right now. */
+  stateBackedUp() {
+    return !!this.state && this.state.bufferedAmount > STATE_BACKLOG_MAX;
+  }
+
+  /**
+   * Unreliable. Snapshots and inputs, where the next packet supersedes this
+   * one — so when the radio is backed up, queueing another would only add
+   * latency that then never drains. Drop at the source instead; the next
+   * packet is at most 33 ms away and fresher anyway. (Anything that must not
+   * be lost — like a snapshot's event list — is the caller's job to hold
+   * back: check stateBackedUp() before building the message.)
+   */
+  sendState(msg) {
+    if (this.stateBackedUp()) return false;
+    return this.raw(this.state, msg);
+  }
 
   close() {
     this.closed = true;

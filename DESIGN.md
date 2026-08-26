@@ -159,10 +159,33 @@ one applied is discarded.
 
 The guest sends only its paddle x, also at 30 Hz on the unreliable channel, and
 renders what it is told — with one exception. Its own paddle is simulated
-locally from the raw finger position and gently pulled back toward the
-authoritative value (snapping only if they diverge by more than 0.14 of the
-court). The paddle therefore never lags the thumb, while the host stays the
-single source of truth for every collision.
+locally from the raw finger position, and the authoritative echo of it is used
+only to detect *genuine* desync, never to fight the thumb. The subtlety is that
+the echo is a whole network round stale — input interval, RTT, snapshot
+interval, a frame at each end, ~60–130 ms in all — so it reports where the
+paddle *was*, not where it is; after a sharp thumb reversal the two ends
+diverge at twice the paddle speed and any naive "pull toward the server"
+correction reads that pure lag as error. (An earlier version did exactly that,
+snapping past 0.14 court of divergence — which fired on every hard reversal
+and teleported the paddle backwards mid-swipe, a visible twitch, worst on
+phones and networks with the most latency.) Instead the guest keeps
+0.45 s of its own paddle's history — nearly twice the worst staleness stack,
+including a 30 Hz low-power-mode frame at each end — and compares the echo
+against the whole span covered in that window. An echo inside the span is merely the past
+and is left alone; only distance beyond the span is real desync (a lost input
+burst, a clamp mismatch), eased away at 2.5/s, or snapped when it exceeds 0.14
+of the court. If no fresh snapshot has arrived within the window the echo
+proves nothing and no correction is applied at all. The paddle therefore never
+lags or fights the thumb, while the host stays the single source of truth for
+every collision.
+
+Two details keep the echo's staleness from growing when a phone starts
+struggling: the 30 Hz send accumulators subtract their interval instead of
+resetting to zero (zeroing rounds the cadence up to whole frames — 22 Hz on a
+45 fps phone), and a state packet is dropped at the source rather than queued
+once the channel is holding more than 4 KB of unsent bytes (about five
+snapshots), because the next packet supersedes it anyway and a queue on a
+stalling radio only ever adds latency.
 
 Between snapshots the guest extrapolates ball positions along their last known
 velocity, which on a LAN's few milliseconds of latency is visually exact. In
@@ -327,6 +350,7 @@ because the threat model is two kids on a sofa.
 | WiFi has client isolation | Connection fails cleanly with a note suggesting a hotspot |
 | Connection drops mid-match | Heartbeat notices within 8 s and shows a link-lost screen |
 | A snapshot arrives late | Discarded by tick number |
+| The radio backs up mid-match | Superseded state packets are dropped at the source, not queued |
 | The special press is dropped | It cannot be — it travels on the reliable channel |
 | Screen sleeps mid-match | Wake lock requested for the duration of the match |
 | No internet on the second visit | Service worker serves the whole game from cache |
