@@ -104,9 +104,15 @@ and bogs the rival down), **MAG** (patient, MAGNET — catches the next ball so
 you can aim it, then flings it back fast), **BOO** (small and spooky, PHANTOM —
 your next return turns into a ghost).
 
-**Seven item crates** drift through the middle of the court: multiball, big
-paddle, deep freeze, turbo, ghost ball, shrink ray and a giant beach ball.
-Hit one with the ball and the pickup is yours.
+**Item crates** drift through the middle of the court, and every stage deals
+its own four. Multiball drops everywhere; each court adds two classics that
+suit the place and one signature crate found nowhere else — **REFLECTION** on
+the Navigli (a mirror-image decoy shadows the ball across the water),
+**SPIRE** on the Duomo (a marble pinnacle rises on your rival's half and the
+ball caroms off it), **ARCO** in Brera (your returns bend back in an arch) and
+**AVALANCHE** in the Alps (a snowdrift guards part of your goal). The classics
+are big paddle, deep freeze, turbo, ghost ball, shrink ray and a giant beach
+ball. Hit a crate with the ball and the pickup is yours.
 
 **Party mode** is a lobby toggle for when a clean duel is not the mood: crates
 rain three times as fast, three fit on the court at once, and multiball turns
@@ -117,8 +123,13 @@ for ten wins, starlight for touring all four stages, gold for a shutout. Pick
 yours in the lobby — your paddle wears it and every ball you return carries
 your trail, on both phones.
 
-**Four stages**, all somewhere in Milano: Navigli Night, Duomo Rooftop, Brera
-Arcade, Alpi Sunset.
+**Four stages**, each a real place painted in code as a 16-bit scene, with a
+court floor that is the same place seen from above: **Navigli Night** — the
+canal at blue hour, lamplight streaking the water, terraces three deep;
+**Duomo Rooftop** — among the marble spires as the sun goes gold, the city
+framed between the statues; **Brera Arcade** — the columned courtyard of the
+Palazzo di Brera in soft daylight; **Alpi Sunset** — the Dolomites on fire
+over a long slope of snow.
 
 **A leaderboard** with no server behind it. Each phone stores its own match
 history; when two phones connect they swap histories and take the union, so
@@ -152,7 +163,8 @@ js/
     input.js          touch and keyboard
     characters.js     the roster
     items.js          the crates
-    stages.js         the four courts
+    stages.js         the four courts and the crates each one deals
+    scenes/           each stage painted in pixel art — backdrop and court floor
   data/
     leaderboard.js    local history and peer merging
 ```

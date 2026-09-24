@@ -288,10 +288,23 @@ no internet.
   the game looks identical on every handset. Outlines are drawn thinner than
   one font pixel, because a full-pixel outline swallows the counters of glyphs
   like 0 and 8 and turns a score into an unreadable brick.
-- **The stages** are procedural: a sky gradient, two parallax skylines built
-  from a seeded generator, and per-stage extras — canal shimmer at Navigli,
-  cathedral spires at the Duomo, an arcade checkerboard at Brera, mountains
-  over the Alps.
+- **The stages** are real places, painted in code. Each is a scene module that
+  paints two pictures: the backdrop, the place seen side-on, and the court
+  floor, the same place seen from above — the Navigli canal at blue hour with
+  lamplight streaking the water and terraces along both banks; the Duomo roof
+  among its marble spires in the golden hour, the Madonnina catching the light
+  and the skyline framed between the pinnacles; the arcaded courtyard of the
+  Palazzo di Brera in soft daylight; the Brenta Dolomites burning at sunset
+  over a snowfield. They are painted in *art pixels* — a canvas two to five
+  times smaller than the screen, scaled up without smoothing — with flat
+  colours, banding and dithering instead of gradients, so every stage has the
+  same 16-bit grain on every handset. During a match the court covers most of
+  a portrait screen, which is why the floor carries the theme: canal water,
+  marble slabs, courtyard paving, wind-rippled snow. Floors are kept dark and
+  low-contrast so the ball and paddles always pop, and mirrored top to bottom
+  so both phones see the same court from their own end. On full graphics each
+  scene adds a small animation layer — lamp flicker, water shimmer, drifting
+  snow — over the still painting.
 - **The feedback layer** is where the 16-bit feel actually lives: hit sparks
   fired along the return angle, expanding rings, screen shake scaled to the
   weight of the event, freeze-frames on a big hit, ball trails that turn to
@@ -359,10 +372,12 @@ because the threat model is two kids on a sofa.
 **The cheap render path.** A budget phone's GPU is fill-rate-bound, and the
 game's look is mostly full-screen fills, so `low` quality attacks exactly that:
 the canvas renders at 1× instead of device pixels (on a 720p phone that halves
-the pixels filled), the whole backdrop — sky, skylines, water — is painted once
-per stage into an offscreen canvas and blitted as a single composite instead of
-~a hundred fills a frame, canvas shadows (the single most expensive 2D feature
-on a weak GPU) are off, and the CRT scanline/vignette passes are skipped. The
+the pixels filled), the scenes' per-frame animation layers are skipped, canvas
+shadows (the single most expensive 2D feature on a weak GPU) are off, and the
+CRT scanline/vignette passes are skipped. The stage art itself costs the same
+in both levels, and very little: backdrop and court floor are each painted once
+per stage and screen size into small art-pixel canvases and blitted as two
+composites a frame, however much detail the painting holds. The
 gameplay stays pixel-identical; only the dressing thins. Gradients everywhere
 are cached rather than rebuilt per frame, in both quality levels.
 
