@@ -3,6 +3,9 @@
 // Everything lives in normalised court coordinates so the same burst looks
 // right on a 5" phone and a tablet. The renderer converts at draw time.
 
+import { ITEMS, itemById } from './items.js';
+import { COURT_ASPECT } from './match.js';
+
 const TAU = Math.PI * 2;
 
 export class Fx {
@@ -79,6 +82,27 @@ export class Fx {
     this.rings.push({ x, y, color, from, to, life, age: 0, width, fillTo });
   }
 
+  /**
+   * Sparkles strung along an arch, ARCO's flourish. `dir` -1 raises it up
+   * the court (toward player 1), +1 down it. `radius` is in court widths.
+   */
+  arch(x, y, opts = {}) {
+    const { color = '#fff', color2 = null, radius = 0.07, count = 9, dir = -1, life = 0.5 } = opts;
+    const n = Math.max(5, Math.round(count * this.budget));
+    for (let i = 0; i < n; i++) {
+      const a = Math.PI * (i / (n - 1));
+      const ox = Math.cos(a), oy = Math.sin(a) * dir;
+      this.particles.push({
+        x: x + ox * radius,
+        y: y + oy * radius * COURT_ASPECT,           // round on screen, not in court units
+        vx: ox * 0.06, vy: oy * 0.06 * COURT_ASPECT,
+        life: life * (0.8 + Math.random() * 0.4), age: 0,
+        size: 0.013, color: color2 && i % 2 ? color2 : color,
+        gravity: 0, squares: true, spin: 0, rot: 0,
+      });
+    }
+  }
+
   /** Pixel text that pops and drifts upward. */
   text(x, y, str, opts = {}) {
     const { color = '#fff', life = 0.9, rise = 0.10, scale = 1, outline = '#1a0d2b' } = opts;
@@ -145,6 +169,9 @@ export class Fx {
   }
 }
 
+const MIRROR = itemById('mirror');
+const ARCO = itemById('arco');
+
 /**
  * Turn a simulation event into noise and light. Kept next to the Fx class so
  * every visual reaction to the rules lives in one readable place.
@@ -154,6 +181,8 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
   const who = ev.p != null ? chars[ev.p] : null;
   const tint = who ? who.color : accent;
   const tint2 = who ? who.color2 : '#fff';
+  // Court +y is screen-down on this phone, or screen-up when the view is flipped.
+  const down = view === 1 ? -1 : 1;
 
   switch (ev.t) {
     case 'hit': {
@@ -163,6 +192,8 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
         speed: ev.big ? 0.95 : 0.5, spread: 1.9, dir, life: ev.big ? 0.6 : 0.36,
       });
       fx.ring(ev.x, ev.y, { color: tint2, to: ev.big ? 0.30 : 0.13, life: ev.big ? 0.5 : 0.28 });
+      // An ARCO return: this one is going to bend.
+      if (ev.a) fx.arch(ev.x, ev.y, { color: ARCO.color, color2: '#efe2c4', radius: 0.06, count: 7, dir: ev.p === 0 ? -1 : 1, life: 0.4 });
       if (ev.big) fx.bang(tint, 0.45, 0.22);
       if (ev.r && ev.r > 0 && ev.r % 5 === 0) {
         fx.text(ev.x, ev.y - 0.05, ev.r + ' RALLY', { color: '#ffd93b', scale: 0.9 });
@@ -212,11 +243,73 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       fx.text(0.5, 0.5, (who?.special.name) || 'SPECIAL', { color: tint2, scale: 1.6, life: 1.1 });
       audio?.special();
       break;
-    case 'item':
+    case 'item': {
       fx.burst(ev.x, ev.y, { count: 26, color: tint2, color2: '#ffffff', speed: 0.8, spread: TAU, life: 0.6 });
       fx.ring(ev.x, ev.y, { color: tint, to: 0.3, life: 0.45 });
-      fx.text(ev.x, ev.y - 0.05, String(ev.id || '').toUpperCase(), { color: '#ffffff', scale: 1.05 });
+      // The item's own name, in its own colour. An id this build doesn't know
+      // (a newer host) still shows something sensible.
+      const item = ITEMS.find((i) => i.id === ev.id);
+      const name = item ? item.name : String(ev.id || '').toUpperCase();
+      // Kept whole on screen: a long name off a crate near the wall would
+      // otherwise run off the edge (6 font pixels a glyph, 90 to the court
+      // width, and 10% more at the top of the text's pop).
+      const half = Math.min(0.5, ((name.length * 6 - 1) * 1.05 * 1.1) / 180);
+      fx.text(Math.max(half, Math.min(1 - half, ev.x)), ev.y - 0.05, name, { color: item ? item.color : '#ffffff', scale: 1.05 });
+      if (ev.id === 'mirror') {
+        // Ripples open where the decoy is about to appear.
+        fx.ring(1 - ev.x, ev.y, { color: MIRROR.color, from: 0.01, to: 0.14, life: 0.5, width: 0.006 });
+        fx.ring(1 - ev.x, ev.y, { color: '#c8e8ff', from: 0.04, to: 0.22, life: 0.75, width: 0.004 });
+      } else if (ev.id === 'arco') {
+        // An arch the right way up on this phone, whichever way it is flipped.
+        fx.arch(ev.x, ev.y, { color: ARCO.color, color2: '#efe2c4', radius: 0.09, count: 11, dir: -down, life: 0.6 });
+        fx.arch(ev.x, ev.y, { color: '#efe2c4', radius: 0.05, count: 7, dir: -down, life: 0.5 });
+      }
       audio?.item();
+      break;
+    }
+    case 'prop':
+      if (ev.k === 'spire') {
+        // Marble dust kicked out sideways as the pinnacle rises. The spire
+        // stands upright on screen, so its dust falls screen-down.
+        fx.burst(ev.x, ev.y, { count: 22, color: '#d8ccc3', color2: '#9a8c9c', speed: 0.45, spread: 0.9, dir: 0, life: 0.55, gravity: 0.15 * down });
+        fx.burst(ev.x, ev.y, { count: 22, color: '#d8ccc3', color2: '#f7efe5', speed: 0.45, spread: 0.9, dir: Math.PI, life: 0.55, gravity: 0.15 * down });
+        fx.ring(ev.x, ev.y, { color: '#f2e2cc', from: 0.02, to: 0.16, life: 0.4, width: 0.01 });
+        audio?.rumble();
+      } else {
+        // A wall of snow blown up off the goal line, into the court, settling
+        // back onto the bank.
+        const bank = ev.p === 0 ? 1 : -1;
+        const into = -bank * Math.PI / 2;
+        fx.burst(ev.x, ev.y, { count: 34, color: '#ffffff', color2: '#b7c6ee', speed: 0.55, spread: 2.4, dir: into, life: 0.7, gravity: 0.25 * bank, size: 0.007 });
+        fx.burst(ev.x - 0.12, ev.y, { count: 12, color: '#ffe0ec', color2: '#ffffff', speed: 0.35, spread: 1.6, dir: into, life: 0.6, gravity: 0.2 * bank, size: 0.006 });
+        fx.burst(ev.x + 0.12, ev.y, { count: 12, color: '#ffe0ec', color2: '#ffffff', speed: 0.35, spread: 1.6, dir: into, life: 0.6, gravity: 0.2 * bank, size: 0.006 });
+        audio?.thump();
+      }
+      break;
+    case 'bump':
+      if (ev.k === 'spire') {
+        fx.burst(ev.x, ev.y, { count: 10, color: '#f7efe5', color2: '#9a8c9c', speed: 0.45, spread: TAU, life: 0.35, gravity: 0.3 * down, size: 0.006 });
+        fx.ring(ev.x, ev.y, { color: '#f2e2cc', to: 0.1, life: 0.25 });
+        audio?.clack();
+      } else {
+        const bank = ev.p === 0 ? 1 : -1;
+        const last = ev.left === 0;
+        fx.burst(ev.x, ev.y, {
+          count: last ? 40 : 22, color: '#ffffff', color2: '#dce6fb', speed: last ? 0.7 : 0.5,
+          spread: 2.2, dir: -bank * Math.PI / 2, life: last ? 0.8 : 0.55, gravity: 0.3 * bank, size: 0.008,
+        });
+        audio?.thump();
+      }
+      break;
+    case 'gone':
+      if (ev.k === 'spire') {
+        fx.burst(ev.x, ev.y, { count: 26, color: '#d8ccc3', color2: '#7d7182', speed: 0.4, spread: TAU, life: 0.6, gravity: 0.45 * down, size: 0.009 });
+        audio?.crumble();
+      } else {
+        // Melted, or the last of it after a final block: a soft slump of
+        // powder onto the goal line.
+        fx.burst(ev.x, ev.y, { count: 18, color: '#ffffff', color2: '#b7c6ee', speed: 0.3, spread: TAU, life: 0.5, gravity: 0.15 * (ev.p === 0 ? 1 : -1), size: 0.006 });
+      }
       break;
     case 'crate':
       audio?.blip(880, 0.05, 'square', 0.06);

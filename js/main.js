@@ -349,7 +349,9 @@ class App {
     this.target = target;
     this.party = !!party;
     this.matchId = mid;
-    this.match = new Match({ chars, stage, target, seed, party });
+    // The stage deals its own crates. Both phones look the pool up from the
+    // stage id in the start message, so it never has to travel.
+    this.match = new Match({ chars, stage, target, seed, party, items: this.stage.items });
     this.finishing = false;
     this.pendingResult = null;
     this.simAccum = 0;

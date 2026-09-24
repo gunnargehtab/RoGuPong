@@ -142,6 +142,12 @@ export class Audio {
   }
 
   wall() { this.tone(240, 0.05, 'triangle', 0.14); }
+  // Stage props. A spire is hard and bright — a knock on marble; a snowdrift
+  // swallows the ball with a low, soft whump.
+  clack() { this.tone(1320, 0.035, 'square', 0.10); this.tone(660, 0.06, 'triangle', 0.18); this.noise(0.05, 0.16, 3000, 1400); }
+  thump() { this.tone(95, 0.16, 'sine', 0.30); this.noise(0.22, 0.20, 620, 160); }
+  rumble() { this.sweep(70, 150, 0.32, 'triangle', 0.22); this.noise(0.34, 0.12, 380, 900); }
+  crumble() { this.noise(0.4, 0.16, 520, 160); this.tone(130, 0.2, 'triangle', 0.12); }
   shield() { this.tone(1100, 0.12, 'sine', 0.2); this.noise(0.25, 0.14, 3200, 900); }
   item() { [0, 4, 7, 12].forEach((n, i) => setTimeout(() => this.tone(NOTE(9 + n) * 2, 0.09, 'square', 0.15), i * 55)); }
   special() { this.sweep(180, 1400, 0.45, 'sawtooth', 0.26); this.noise(0.5, 0.2, 600, 4000); }
