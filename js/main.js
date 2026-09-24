@@ -496,8 +496,11 @@ class App {
   sharedProtocol() {
     // No phone on the other end (a console match, or the one after a drop):
     // whatever the last friend was running no longer matters.
-    if (!this.peer || this.theirProtocol == null) return PROTOCOL;
-    return Math.min(PROTOCOL, this.theirProtocol);
+    if (!this.peer) return PROTOCOL;
+    // Connected but not yet told: assume the oldest build until 'hello' says
+    // otherwise. Their ready follows their hello on the ordered channel, so a
+    // match never actually starts on this guess — it is only the safe side.
+    return Math.min(PROTOCOL, this.theirProtocol ?? 1);
   }
 
   /** The stage's crate pool, minus anything the other phone's build predates. */
