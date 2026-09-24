@@ -27,6 +27,11 @@ const ASSETS = [
   'js/game/characters.js',
   'js/game/items.js',
   'js/game/stages.js',
+  'js/game/scenes/kit.js',
+  'js/game/scenes/navigli.js',
+  'js/game/scenes/duomo.js',
+  'js/game/scenes/brera.js',
+  'js/game/scenes/alpi.js',
   'js/data/leaderboard.js',
 ];
 

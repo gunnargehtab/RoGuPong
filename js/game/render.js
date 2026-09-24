@@ -78,8 +78,8 @@ export class Renderer {
     this.trails = new Map();
     this.scanlines = null;
     this.gradCache = new Map();
-    this.bgCache = null;
-    this.bgCacheFor = null;
+    this.sceneCache = {};
+    this.ap = 2;
     // 'high' draws the full 16-bit treatment. 'low' drops everything that costs
     // a lot of fill rate for a little polish — canvas shadows above all, which
     // are the single most expensive thing an older phone GPU can be asked to do
@@ -132,11 +132,9 @@ export class Renderer {
     this.ctx.imageSmoothingEnabled = false;
     this.scanlines = null;
     this.vignette = null;
-    this.skyGradient = null;
-    this.skyGradientFor = null;
     this.gradCache.clear();
-    this.bgCache = null;
-    this.bgCacheFor = null;
+    this.sceneCache = {};
+    this.ap = this.artPixel();
     this.layout();
   }
 
@@ -194,7 +192,7 @@ export class Renderer {
       ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     }
 
-    this.drawBackdrop(stage, time, shake);
+    this.drawBackdrop(stage, time);
     this.drawCourt(m, stage, flip, chars, view, time);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
@@ -207,121 +205,74 @@ export class Renderer {
   }
 
   /* ---------------------------------------------------------------- */
-  /* Backdrop                                                          */
+  /* Scenery                                                           */
 
   /**
-   * The backdrop is most of the fill rate a frame costs, and in 'low' none of
-   * its animation (parallax drift, star twinkle, window flicker) is worth
-   * that. Paint it once per stage and size into an offscreen canvas and blit —
-   * one composite instead of a hundred fills.
+   * Stage art is painted in art pixels — a canvas a few times smaller than the
+   * screen — and scaled up with nearest-neighbour sampling. That is the 16-bit
+   * look and the cheap path at once: each scene is painted once per stage and
+   * size, so however detailed the painting, a frame costs one blit. 'high' adds
+   * the scene's small animation layer on top (lamp flicker, water shimmer,
+   * drifting snow); 'low' shows the still painting.
    */
-  drawBackdrop(stage, time, shake) {
-    if (this.quality === 'low') {
-      const M = SHAKE_MARGIN;
-      const key = stage.id + ':' + this.W + 'x' + this.H;
-      if (this.bgCacheFor !== key) {
-        const off = document.createElement('canvas');
-        off.width = Math.ceil((this.W + M * 2) * this.dpr);
-        off.height = Math.ceil((this.H + M * 2) * this.dpr);
-        const octx = off.getContext('2d', { alpha: false });
-        octx.setTransform(this.dpr, 0, 0, this.dpr, M * this.dpr, M * this.dpr);
-        this.paintBackdrop(octx, stage, 0, 0);
-        this.bgCache = off;
-        this.bgCacheFor = key;
-      }
-      this.ctx.drawImage(this.bgCache, -M, -M, this.W + M * 2, this.H + M * 2);
-      return;
-    }
-    this.paintBackdrop(this.ctx, stage, time, shake);
+  artPixel() {
+    return Math.max(2, Math.round(Math.min(this.W, this.H) / 180));
   }
 
-  paintBackdrop(ctx, stage, time, shake) {
-    let sky;
-    if (ctx === this.ctx) {
-      if (!this.skyGradient || this.skyGradientFor !== stage.id) {
-        this.skyGradient = this.makeSky(ctx, stage);
-        this.skyGradientFor = stage.id;
-      }
-      sky = this.skyGradient;
-    } else {
-      sky = this.makeSky(ctx, stage);
+  sceneLayer(slot, key, w, h, paint) {
+    let entry = this.sceneCache[slot];
+    if (!entry || entry.key !== key) {
+      const off = document.createElement('canvas');
+      off.width = Math.max(1, Math.ceil(w / this.ap));
+      off.height = Math.max(1, Math.ceil(h / this.ap));
+      const octx = off.getContext('2d', { alpha: false });
+      paint(octx, off.width, off.height);
+      entry = { key, canvas: off };
+      this.sceneCache[slot] = entry;
     }
-    ctx.fillStyle = sky;
+    return entry.canvas;
+  }
+
+  drawBackdrop(stage, time) {
     // Overdraw the edges: screen shake translates the canvas, and a backdrop
     // that stopped at the old bounds would leave the previous frame showing in
     // the gap.
-    ctx.fillRect(-SHAKE_MARGIN, -SHAKE_MARGIN, this.W + SHAKE_MARGIN * 2, this.H + SHAKE_MARGIN * 2);
-
-    if (stage.stars) {
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      const count = this.quality === 'low' ? Math.min(stage.stars, 20) : stage.stars;
-      for (let i = 0; i < count; i++) {
-        const x = ((i * 97) % 100) / 100 * this.W;
-        const y = ((i * 53) % 60) / 100 * this.H * 0.9;
-        const tw = 0.5 + 0.5 * Math.sin(time * 2 + i);
-        ctx.globalAlpha = 0.25 + tw * 0.55;
-        const s = i % 7 === 0 ? 2 : 1;
-        ctx.fillRect(Math.round(x), Math.round(y), s, s);
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    const drift = Math.sin(time * 0.12) * this.W * 0.012;
-    this.drawSkyline(ctx, stage.far, drift * 0.5 + shake * 3, time);
-    this.drawSkyline(ctx, stage.near, drift + shake * 6, time);
-
-    if (stage.water) {
-      const wy = stage.water.top * this.H;
-      ctx.fillStyle = stage.water.color;
-      ctx.fillRect(-SHAKE_MARGIN, wy, this.W + SHAKE_MARGIN * 2, this.H - wy + SHAKE_MARGIN);
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = stage.water.shimmer;
-      const shimmer = this.quality === 'low' ? 8 : 26;
-      for (let i = 0; i < shimmer; i++) {
-        const y = wy + ((i * 37) % 100) / 100 * (this.H - wy);
-        const w = 12 + ((i * 17) % 40);
-        const x = ((i * 83) % 100) / 100 * this.W + Math.sin(time * 1.6 + i) * 10;
-        ctx.fillRect(x, y, w, 2);
-      }
-      ctx.globalAlpha = 1;
-    }
+    const M = SHAKE_MARGIN;
+    const ap = this.ap;
+    const scene = stage.scene;
+    const art = this.sceneLayer('backdrop', `${stage.id}:${this.W}x${this.H}`,
+      this.W + M * 2, this.H + M * 2, (octx, w, h) => scene.backdrop(octx, w, h));
+    const ctx = this.ctx;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(art, -M, -M, art.width * ap, art.height * ap);
+    if (this.quality === 'low' || !scene.animateBackdrop) return;
+    ctx.save();
+    ctx.translate(-M, -M);
+    ctx.scale(ap, ap);
+    scene.animateBackdrop(ctx, art.width, art.height, time);
+    ctx.restore();
   }
 
-  makeSky(ctx, stage) {
-    const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, stage.sky[0]);
-    g.addColorStop(0.55, stage.sky[1]);
-    g.addColorStop(1, stage.sky[2]);
-    return g;
-  }
-
-  drawSkyline(ctx, layer, offset, time) {
-    if (!layer) return;
-    const baseY = layer.y * this.H;
-    ctx.fillStyle = layer.color;
-    for (const s of layer.shapes) {
-      const x = s.x * this.W + offset;
-      const w = s.w * this.W;
-      const h = s.h * this.H;
-      ctx.fillRect(Math.round(x), Math.round(baseY - h), Math.ceil(w), Math.ceil(h + this.H));
-      if (s.spire) {
-        ctx.beginPath();
-        ctx.moveTo(x, baseY - h);
-        ctx.lineTo(x + w / 2, baseY - h - h * 0.5);
-        ctx.lineTo(x + w, baseY - h);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-    // A few lit windows.
-    if (this.quality === 'low') return;
-    ctx.fillStyle = 'rgba(255,220,140,0.20)';
-    for (let i = 0; i < 40; i++) {
-      const s = layer.shapes[i % layer.shapes.length];
-      const x = s.x * this.W + offset + ((i * 13) % Math.max(1, s.w * this.W - 6)) + 3;
-      const y = baseY - s.h * this.H + 6 + ((i * 29) % Math.max(1, s.h * this.H - 10));
-      if (Math.sin(time * 0.7 + i * 2.3) > -0.2) ctx.fillRect(Math.round(x), Math.round(y), 2, 3);
-    }
+  /** The court floor: the same place seen from above. Called inside the court clip. */
+  drawCourtFloor(stage, time) {
+    const c = this.court;
+    const ap = this.ap;
+    const scene = stage.scene;
+    const art = this.sceneLayer('court', `${stage.id}:${c.w}x${c.h}`,
+      c.w, c.h, (octx, w, h) => scene.court(octx, w, h));
+    // The art canvas rounds up to whole art pixels; centre the overhang so a
+    // floor painted symmetric stays symmetric on screen.
+    const ox = c.x - Math.floor((art.width * ap - c.w) / 2);
+    const oy = c.y - Math.floor((art.height * ap - c.h) / 2);
+    const ctx = this.ctx;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(art, ox, oy, art.width * ap, art.height * ap);
+    if (this.quality === 'low' || !scene.animateCourt) return;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(ap, ap);
+    scene.animateCourt(ctx, art.width, art.height, time);
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- */
@@ -342,17 +293,7 @@ export class Renderer {
     roundRect(ctx, c.x, c.y, c.w, c.h, 10);
     ctx.clip();
 
-    if (stage.checker) {
-      const n = 8;
-      const s = c.w / n;
-      for (let y = 0; y * s < c.h; y++) {
-        for (let x = 0; x < n; x++) {
-          if ((x + y) % 2) continue;
-          ctx.fillStyle = 'rgba(255,255,255,0.025)';
-          ctx.fillRect(c.x + x * s, c.y + y * s, s, s);
-        }
-      }
-    }
+    this.drawCourtFloor(stage, time);
 
     // Centre line
     ctx.strokeStyle = stage.line;
@@ -898,7 +839,7 @@ export class Renderer {
   drawMenuBackdrop(stage, time, fx) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawBackdrop(stage, time, 0);
+    this.drawBackdrop(stage, time);
 
     if (!this.ghost) {
       this.ghost = { x: 0.3, y: 0.4, vx: 0.16, vy: 0.21, trail: [] };

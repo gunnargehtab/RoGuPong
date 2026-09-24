@@ -149,10 +149,11 @@ export class Screens {
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn small secondary" data-action="toggle-quality">
-          Graphics: ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
+          Graphics set to ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
       </div>
       <small class="muted" style="display:block;margin-top:6px">
-        Fast drops the glows and scanlines. Older phones get a much smoother game.</small>`;
+        Tap to switch. Fast drops the glows, scanlines and animated scenery.
+        Older phones get a much smoother game.</small>`;
     wrap.appendChild(who);
 
     const input = who.querySelector('#pname');
