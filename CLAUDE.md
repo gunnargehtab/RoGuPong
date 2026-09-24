@@ -24,7 +24,7 @@ Deployment is GitHub Pages serving straight from `main`; every push to `main` re
 
 `js/main.js` defines `App`, the conductor: screen router (`go()`), connection lifecycle, and the frame loop. Menus are DOM (`js/ui/screens.js`) layered over a single full-screen canvas that renders both the menu backdrop and the match (`js/game/render.js`).
 
-**Court model.** The match simulation (`js/game/match.js`) runs in a normalised court: x and y both 0..1, player 0 defends the bottom, player 1 the top. The renderer flips y for player 1, so each phone shows its own player at the bottom. `App.view` (0 host, 1 guest) is the local player index.
+**Court model.** The match simulation (`js/game/match.js`) runs in a normalised court: x and y both 0..1, player 0 defends the bottom, player 1 the top. The renderer flips y for player 1, so each phone shows its own player at the bottom. `App.view` (0 host, 1 guest) is the local player index. The court is `COURT_ASPECT` (0.56, exported from `match.js`) as wide as it is tall, so anything round in court space — the SPIRE's collision circle — is computed in aspect-corrected coordinates.
 
 **Netcode: host-authoritative, guest predicts only its own paddle.** The host runs the full simulation at a fixed 1/60 timestep (accumulator in `App.stepMatch`) and broadcasts snapshots at 30 Hz. The guest sends only its paddle x at 30 Hz, extrapolates ball motion between snapshots, and simulates its own paddle locally (`App.predictPaddle`), reconciling against the span its paddle covered in the last 0.45 s — the authoritative echo is ~a network round stale, so only divergence beyond that recent span counts as desync (eased away, or snapped past 0.14 court). Two data channels ride one `RTCPeerConnection` (`js/net/peer.js`):
 
@@ -47,6 +47,7 @@ Anything that must not be lost goes on `ctl`; anything superseded by the next pa
 
 - **`sw.js` precache list**: every file the game loads must be listed in `ASSETS`, so adding or renaming a JS/CSS file means updating `sw.js` too. Fetch is network-first with cache fallback, so redeploys are picked up automatically.
 - **DESIGN.md is the source of truth for tuning.** Every physics constant (paddle speed 2.35, speed ramp ×1.035, rally-pressure shrink, meter rates…) was deliberately balanced — the file explains why each number is what it is. Read the relevant section before changing gameplay values, and keep the doc in sync with the code.
+- **Stage objects** raised by the signature crates (SPIRE's pinnacle, AVALANCHE's snowdrift) live in `Match.props`, ride the snapshot as `pr`, and are bounced off guest-side in `extrapolate()` too. New snapshot fields are always appended to the end of their arrays so a phone on an older build ignores them.
 - **Matches are set up entirely by the host's `start` message** (`App.hostStart`): seed, stage, target, party flag, characters, match id — both phones construct their `Match` from it. Inside the simulation all randomness goes through the seeded PRNG (`this.rand`, mulberry32), never `Math.random`, so serves and crate rolls stay tied to the shared seed.
 - Both `README.md` and `DESIGN.md` describe behavior in detail; user-visible changes usually need a matching edit there.
-- In-game text renders through the 58-glyph 5×7 bitmap font in `js/ui/pixelfont.js`; new glyphs must be added there before they can appear on the canvas.
+- In-game text renders through the 62-glyph 5×7 bitmap font in `js/ui/pixelfont.js`; new glyphs must be added there before they can appear on the canvas.

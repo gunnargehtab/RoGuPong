@@ -147,7 +147,7 @@ sw.js                 service worker — makes the game work offline
 js/
   main.js             screen router, connection lifecycle, frame loop
   ui/
-    pixelfont.js      58-glyph 5x7 bitmap font
+    pixelfont.js      62-glyph 5x7 bitmap font
     logo.js           the RoGuPong logotype
     screens.js        menus, lobby, leaderboard, results
   net/
