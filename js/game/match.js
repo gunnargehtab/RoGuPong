@@ -594,11 +594,12 @@ export class Match {
       case 'multi': {
         for (const sign of [-1, 1]) {
           if (this.balls.length >= MAX_BALLS) break;
+          // atan2(vx, vy) is makeBall's own angle convention, so the extras
+          // fan out around the ball's real heading — up the court as well as
+          // down it. (They used to be flipped toward the bottom goal whenever
+          // the ball was heading up, turning the host's own multiball on them.)
           const angle = Math.atan2(ball.vx, ball.vy) + sign * 0.42;
-          const extra = makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner);
-          extra.vy = Math.cos(angle) * extra.speed * Math.sign(ball.vy || 1);
-          extra.vx = Math.sin(angle) * extra.speed;
-          this.balls.push(extra);
+          this.balls.push(makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner));
         }
         break;
       }
