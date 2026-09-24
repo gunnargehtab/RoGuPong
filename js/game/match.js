@@ -18,6 +18,15 @@ export const PADDLE_H = 0.020;
 export const PADDLE_Y = [0.905, 0.095];
 export const SHIELD_Y = [0.955, 0.045];
 export const CRATE_R = 0.043;
+// The court is drawn 0.56 as wide as it is tall. The rules mostly live in the
+// stretched 0..1 square, but anything round — the SPIRE — collides in true
+// proportions, so it is round on screen and the ball leaves it at the angle
+// the eye expects.
+export const COURT_ASPECT = 0.56;
+export const SPIRE_R = 0.06;             // court widths
+export const SPIRE_Y = [0.70, 0.30];     // by the victim: the middle of their half
+export const DRIFT_Y = [0.978, 0.022];   // on each goal line, behind the shield
+export const DRIFT_HALF = 0.18;
 
 const BASE_SPEED = 0.62;      // court heights per second
 const MAX_SPEED = 1.75;
@@ -36,6 +45,12 @@ const METER_PER_HIT = 0.17;
 const METER_PER_SEC = 0.022;
 const MAGNET_HOLD = 1.0;      // seconds a caught ball sits on the paddle
 const PHANTOM_GHOST = 3.0;    // seconds of ghost on a PHANTOM return
+const ARCO_K = 2.2;           // inward spin on an ARCO return, at serve pace
+const ARCO_POW = 1.75;        // ... scaled by pace^this, so the arch keeps its shape
+const ARCO_MIN = 0.15;        // radians off straight before a return bends at all
+const SPIRE_MIN_VY = 0.35;    // share of the speed a spire bounce leaves vertical
+const DRIFT_HITS = 2;         // blocks before a snowdrift is spent
+const DRIFT_DAMP = 0.88;      // speed kept by a ball the snow sends back
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -53,6 +68,19 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 /** A beach ball is a much bigger target; everything that collides asks here. */
 export const ballRadius = (b) => BALL_R * (b.beach > 0 ? 2.3 : 1);
 
+/**
+ * Where a ball will cross the line at height y, bouncing off the side walls on
+ * the way — or null if it isn't heading there. Straight-line only: spin is
+ * ignored, which is close enough for keeping things out of its way.
+ */
+function crossingX(b, y) {
+  if (b.held >= 0 || !b.vy || (y - b.y) / b.vy <= 0) return null;
+  const rad = ballRadius(b);
+  const span = 1 - rad * 2;
+  const u = ((b.x + b.vx * ((y - b.y) / b.vy) - rad) % (span * 2) + span * 2) % (span * 2);
+  return rad + (u <= span ? u : span * 2 - u);
+}
+
 let ballSeq = 0;
 
 function makeBall(x, y, angle, speed, owner) {
@@ -66,6 +94,8 @@ function makeBall(x, y, angle, speed, owner) {
     fire: 0,
     ghost: 0,       // seconds of near-invisibility left
     beach: 0,       // seconds of huge-and-floaty left
+    mirror: 0,      // seconds of REFLECTION decoy left
+    arc: false,     // the spin it carries is an ARCO bend (host only)
     held: -1,       // player index holding it on a magnetic paddle, or -1
     holdT: 0,
     hx: 0,          // offset from the holding paddle's centre
@@ -82,6 +112,8 @@ export class Match {
     this.party = !!opts.party;
     this.rand = mulberry(opts.seed || 12345);
     this.names = opts.names || ['P1', 'P2'];
+    // The stage's crate pool, as item ids; null deals every item.
+    this.items = Array.isArray(opts.items) && opts.items.length ? [...opts.items] : null;
 
     this.tick = 0;
     this.time = 0;
@@ -104,12 +136,16 @@ export class Match {
       shrink: 0,
       shield: 0,
       magnet: 0,          // seconds the paddle stays magnetic, waiting for a ball
+      arco: 0,            // seconds of ARCO left: returns bend back in
       pending: null,      // 'afterburn' | 'curve' armed for the next hit
       lastItem: null,
     }));
 
     this.balls = [];
     this.crates = [];
+    // Stage props raised by items: SPIRE pinnacles and AVALANCHE snowdrifts,
+    // { kind: 'spire' | 'drift', x, y, size, t: seconds left, age, p: owner, hits }.
+    this.props = [];
     this.nextCrate = this.rollCrateDelay();
     this.input = [{ x: 0.5, special: false }, { x: 0.5, special: false }];
     this.events = [];
@@ -178,6 +214,7 @@ export class Match {
       p.frost = Math.max(0, p.frost - dt);
       p.shrink = Math.max(0, p.shrink - dt);
       p.magnet = Math.max(0, p.magnet - dt);
+      p.arco = Math.max(0, p.arco - dt);
       if (p.pending && p.pending.until <= this.time) p.pending = null;
       this.meter[i] = clamp(this.meter[i] + METER_PER_SEC * this.chars[i].meterRate * dt, 0, 1);
       if (this.input[i].special) {
@@ -200,6 +237,7 @@ export class Match {
         }
         break;
       case 'play':
+        this.stepProps(dt);
         this.stepCrates(dt);
         this.stepBalls(dt);
         break;
@@ -244,6 +282,7 @@ export class Match {
       b.fire = Math.max(0, b.fire - dt);
       b.ghost = Math.max(0, b.ghost - dt);
       b.beach = Math.max(0, b.beach - dt);
+      b.mirror = Math.max(0, b.mirror - dt);
       const rad = ballRadius(b);
 
       // A caught ball rides the magnetic paddle until the hold runs out —
@@ -268,15 +307,16 @@ export class Match {
         b.vy = (b.vy / mag) * b.speed;
       }
 
+      const x0 = b.x, y0 = b.y;           // props test the whole step's path
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
       // Side walls
       if (b.x < rad && b.vx < 0) {
-        b.x = rad; b.vx = -b.vx; b.spin = -b.spin * 0.5;
+        b.x = rad; b.vx = -b.vx; b.spin = -b.spin * 0.5; this.endArc(b);
         this.event({ t: 'wall', x: b.x, y: b.y });
       } else if (b.x > 1 - rad && b.vx > 0) {
-        b.x = 1 - rad; b.vx = -b.vx; b.spin = -b.spin * 0.5;
+        b.x = 1 - rad; b.vx = -b.vx; b.spin = -b.spin * 0.5; this.endArc(b);
         this.event({ t: 'wall', x: b.x, y: b.y });
       }
 
@@ -284,6 +324,7 @@ export class Match {
         this.collidePaddle(b, i);
         this.collideShield(b, i);
       }
+      if (this.props.length) this.collideProps(b, x0, y0, true);
       this.collideCrates(b);
 
       // Goals
@@ -320,6 +361,7 @@ export class Match {
       b.vx = 0;
       b.vy = 0;
       b.spin = 0;
+      b.arc = false;
       b.owner = i;
       this.rally++;
       this.bestRally = Math.max(this.bestRally, this.rally);
@@ -333,6 +375,7 @@ export class Match {
     this.rally++;
     this.bestRally = Math.max(this.bestRally, this.rally);
     b.owner = i;
+    this.endArc(b);
 
     // Classic pong control: where you hit the paddle sets the angle.
     let angle = clamp(offset, -1, 1) * 1.05;     // up to ~60 degrees
@@ -349,6 +392,7 @@ export class Match {
     if (b.beach > 0) b.speed = Math.min(b.speed, BASE_SPEED * 1.15);
 
     let big = false;
+    let curved = false;
     const pending = p.pending;
     if (pending && pending.id === 'phantom') {
       b.ghost = PHANTOM_GHOST;
@@ -366,6 +410,7 @@ export class Match {
       this.event({ t: 'burn', x: b.x, y: b.y, p: i });
     } else if (pending && pending.id === 'curve') {
       b.spin = (offset >= 0 ? 1 : -1) * 3.4;
+      curved = true;
       p.pending = null;
       big = true;
       this.event({ t: 'curve', x: b.x, y: b.y, p: i });
@@ -375,9 +420,34 @@ export class Match {
     b.vx = Math.sin(angle) * b.speed;
     b.vy = Math.cos(angle) * b.speed * dir;
 
+    // ARCO: inward spin, so a wide return swings out and arches back in.
+    // Scaled by how wide the shot is — a straight one barely bends — and by
+    // speed^ARCO_POW, which keeps the arch the same shape at every pace: a
+    // fixed spin hooks a serve-pace ball clean across the court and hardly
+    // bends one at the speed cap. CURVE, when it fires on the same hit, wins.
+    let arc = 0;
+    if (p.arco > 0 && !curved && Math.abs(angle) >= ARCO_MIN) {
+      b.spin = -Math.sign(b.vx) * ARCO_K * Math.abs(Math.sin(angle))
+        * Math.pow(b.speed / BASE_SPEED, ARCO_POW);
+      b.arc = true;
+      arc = 1;
+    }
+
     this.meter[i] = clamp(this.meter[i] + METER_PER_HIT * this.chars[i].meterRate, 0, 1);
     this.shake = Math.max(this.shake, big ? 1 : 0.32);
-    this.event({ t: 'hit', x: b.x, y: b.y, p: i, big, r: this.rally });
+    this.event({ t: 'hit', x: b.x, y: b.y, p: i, big, r: this.rally, ...(arc ? { a: 1 } : {}) });
+  }
+
+  /**
+   * An ARCO bend belongs to the return that earned it. The next touch —
+   * paddle, shield, wall, prop — straightens the ball out, so the rival's
+   * reply is never bent by spin left over from yours and a bend can't hug a
+   * wall.
+   */
+  endArc(b) {
+    if (!b.arc) return;
+    b.arc = false;
+    b.spin = 0;
   }
 
   collideShield(b, i) {
@@ -394,9 +464,116 @@ export class Match {
     b.y = i === 0 ? sy - rad : sy + rad;
     b.vy = -b.vy;
     b.owner = i;
+    this.endArc(b);
     b.speed = Math.min(MAX_SPEED, b.speed * 1.05);
     this.shake = Math.max(this.shake, 0.7);
     this.event({ t: 'shield', x: b.x, y: b.y, p: i });
+  }
+
+  /**
+   * Stage props in the ball's way, tested along the whole step's path so a
+   * fast ball can't skip through one. `live` is false on the guest, which
+   * bounces its extrapolated balls only for the look and leaves the rules —
+   * owners, blocks, events — to the host. Returns whether anything bounced.
+   */
+  collideProps(b, x0, y0, live) {
+    let bounced = false;
+    for (let pi = this.props.length - 1; pi >= 0; pi--) {
+      const q = this.props[pi];
+      // A kind this build doesn't know (a newer host) is left alone, not
+      // bounced off as if it were a snowdrift.
+      const hit = q.kind === 'spire' ? this.bounceSpire(b, q, x0, y0)
+        : q.kind === 'drift' ? this.bounceDrift(b, q, x0, y0) : false;
+      if (!hit) continue;
+      bounced = true;
+      this.endArc(b);
+      if (!live) continue;
+      q.hits++;
+      if (q.kind === 'spire') {
+        this.shake = Math.max(this.shake, 0.35);
+        this.event({ t: 'bump', k: 'spire', x: b.x, y: b.y, p: q.p });
+        continue;
+      }
+      // The snow takes the sting out of it, and the save counts as the
+      // drift owner's touch — the next crate that ball breaks is theirs.
+      b.owner = q.p;
+      b.speed = Math.max(Math.min(b.speed, BASE_SPEED * 0.75), b.speed * DRIFT_DAMP);
+      this.renormalise(b);
+      this.shake = Math.max(this.shake, 0.5);
+      this.event({ t: 'bump', k: 'drift', x: b.x, y: q.y, p: q.p, left: Math.max(0, DRIFT_HITS - q.hits) });
+      if (q.hits >= DRIFT_HITS) this.dropProp(q);
+    }
+    return bounced;
+  }
+
+  /** Circle bounce, worked in true proportions (x in court widths, y / COURT_ASPECT). */
+  bounceSpire(b, q, x0, y0) {
+    const A = COURT_ASPECT;
+    const R = q.size + ballRadius(b);
+    const cy = q.y / A;
+    const ax = x0 - q.x, ay = y0 / A - cy;            // path start, relative
+    let px = b.x - q.x, py = b.y / A - cy;            // path end, relative
+    let nx, ny;
+    if (ax * ax + ay * ay >= R * R) {
+      // First touch along the path, if there is one.
+      const dx = px - ax, dy = py - ay;
+      const a = dx * dx + dy * dy;
+      if (a < 1e-12) return false;
+      const h = ax * dx + ay * dy;
+      const disc = h * h - a * (ax * ax + ay * ay - R * R);
+      if (disc < 0) return false;
+      const t = (-h - Math.sqrt(disc)) / a;
+      if (t < 0 || t > 1) return false;
+      px = ax + dx * t;
+      py = ay + dy * t;
+      nx = px / R;
+      ny = py / R;
+    } else {
+      // It started inside — the spire rose under it. Push it straight out
+      // rather than let it rattle about in the marble.
+      const d = Math.hypot(px, py);
+      if (d >= R) return false;                     // already on its way out
+      if (d > 1e-9) { nx = px / d; ny = py / d; } else {
+        const m = Math.hypot(b.vx, b.vy / A) || 1;
+        nx = -b.vx / m; ny = -(b.vy / A) / m;
+        if (!nx && !ny) ny = 1;
+      }
+    }
+    const rad = ballRadius(b);
+    b.x = clamp(q.x + nx * (R + 1e-4), rad, 1 - rad);
+    b.y = (cy + ny * (R + 1e-4)) * A;
+    let vx = b.vx, vy = b.vy / A;
+    const vn = vx * nx + vy * ny;
+    if (vn < 0) { vx -= 2 * vn * nx; vy -= 2 * vn * ny; }
+    b.vx = vx;
+    b.vy = vy * A;
+    this.renormalise(b);                            // same speed as it arrived
+    // A glancing hit could send it off nearly flat, to ping-pong between the
+    // spire and a wall; keep it heading somewhere, away from the spire.
+    const minVy = SPIRE_MIN_VY * b.speed;
+    if (Math.abs(b.vy) < minVy) {
+      b.vy = (Math.sign(ny) || Math.sign(b.vy) || 1) * minVy;
+      b.vx = (Math.sign(b.vx) || 1) * Math.sqrt(b.speed * b.speed - minVy * minVy);
+    }
+    return true;
+  }
+
+  /** A snowdrift is a line across part of its owner's goal, facing the court. */
+  bounceDrift(b, q, x0, y0) {
+    const down = q.p === 0;                          // guarding the bottom goal
+    if (down ? b.vy <= 0 : b.vy >= 0) return false;
+    const rad = ballRadius(b);
+    const lead0 = down ? y0 + rad : y0 - rad;
+    const lead1 = down ? b.y + rad : b.y - rad;
+    // Only a ball crossing the line this step: one already behind it is a goal.
+    if (down ? lead0 > q.y || lead1 < q.y : lead0 < q.y || lead1 > q.y) return false;
+    const f = lead1 !== lead0 ? (q.y - lead0) / (lead1 - lead0) : 1;
+    const xc = x0 + (b.x - x0) * f;
+    if (Math.abs(xc - q.x) > q.size + rad * 0.5) return false;
+    b.x = clamp(xc, rad, 1 - rad);
+    b.y = down ? q.y - rad : q.y + rad;
+    b.vy = -b.vy;
+    return true;
   }
 
   collideCrates(b) {
@@ -413,6 +590,7 @@ export class Match {
 
   applyItem(item, owner, ball) {
     const foe = 1 - owner;
+    const pace = ball.speed;
     this.paddles[owner].lastItem = { id: item.id, at: this.time };
     switch (item.id) {
       case 'grow':
@@ -429,11 +607,12 @@ export class Match {
       case 'multi': {
         for (const sign of [-1, 1]) {
           if (this.balls.length >= MAX_BALLS) break;
+          // atan2(vx, vy) is makeBall's own angle convention, so the extras
+          // fan out around the ball's real heading — up the court as well as
+          // down it. (They used to be flipped toward the bottom goal whenever
+          // the ball was heading up, turning the host's own multiball on them.)
           const angle = Math.atan2(ball.vx, ball.vy) + sign * 0.42;
-          const extra = makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner);
-          extra.vy = Math.cos(angle) * extra.speed * Math.sign(ball.vy || 1);
-          extra.vx = Math.sin(angle) * extra.speed;
-          this.balls.push(extra);
+          this.balls.push(makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner));
         }
         break;
       }
@@ -443,6 +622,47 @@ export class Match {
       case 'shrink':
         this.paddles[foe].shrink = item.duration;
         break;
+      case 'mirror':
+        ball.mirror = item.duration;
+        break;
+      case 'arco':
+        this.paddles[owner].arco = item.duration;
+        break;
+      case 'spire': {
+        // One per owner: a second pick moves it.
+        const old = this.props.find((q) => q.kind === 'spire' && q.p === owner);
+        if (old) this.dropProp(old);
+        // Never in the path of the shot that raised it: that ball is still
+        // heading for the victim's half, and a spire rising under it would
+        // bat the picker's own attack straight back before it had even
+        // finished rising. Keep it clear of where the ball will cross its
+        // line (walls folded in, spin ignored) — wider for a slanting ball,
+        // whose path passes the spire closer than that crossing point does.
+        let x = 0.25 + this.rand() * 0.5;
+        const cross = crossingX(ball, SPIRE_Y[foe]);
+        const upright = Math.abs(ball.vy / COURT_ASPECT) / Math.hypot(ball.vx, ball.vy / COURT_ASPECT) || 1;
+        const clear = Math.min(0.24, (SPIRE_R + ballRadius(ball)) / upright + 0.02);
+        if (cross != null && Math.abs(x - cross) < clear) {
+          x = clamp(cross > 0.5 ? cross - clear : cross + clear, 0.25, 0.75);
+        }
+        this.props.push({ kind: 'spire', x, y: SPIRE_Y[foe], size: SPIRE_R, t: item.duration, age: 0, p: owner, hits: 0 });
+        this.event({ t: 'prop', k: 'spire', x, y: SPIRE_Y[foe], p: owner });
+        break;
+      }
+      case 'avalanche': {
+        // Snow piles up on the half of the goal the paddle isn't covering.
+        const x = clamp(this.paddles[owner].x < 0.5 ? 0.72 : 0.28, DRIFT_HALF, 1 - DRIFT_HALF);
+        const old = this.props.find((q) => q.kind === 'drift' && q.p === owner);
+        if (old && old.x === x) {
+          old.t = item.duration;                      // topped up where it stands
+          old.hits = 0;
+        } else {
+          if (old) this.dropProp(old);
+          this.props.push({ kind: 'drift', x, y: DRIFT_Y[owner], size: DRIFT_HALF, t: item.duration, age: 0, p: owner, hits: 0 });
+        }
+        this.event({ t: 'prop', k: 'drift', x, y: DRIFT_Y[owner], p: owner });
+        break;
+      }
       case 'beach': {
         ball.beach = item.duration;
         ball.speed = Math.max(BASE_SPEED * 0.75, ball.speed * 0.55);
@@ -456,6 +676,10 @@ export class Match {
       default:
         break;
     }
+    // An ARCO bend is sized for the pace it was struck at. TURBO or a BEACH
+    // BALL mid-arch changes the pace, so rescale the bend with it: left at
+    // full strength, a beach ball hooks almost flat into the wall.
+    if (ball.arc && ball.speed !== pace) ball.spin *= Math.pow(ball.speed / pace, ARCO_POW);
   }
 
   renormalise(b) {
@@ -509,6 +733,7 @@ export class Match {
           b.speed = Math.min(MAX_SPEED, b.speed * 1.15);
           b.vy = Math.abs(b.vy) * away;
           b.spin = 0;
+          b.arc = false;
           this.renormalise(b);
           b.owner = i;
         }
@@ -521,6 +746,20 @@ export class Match {
         break;
     }
     this.event({ t: 'special', p: i, id: spec.id });
+  }
+
+  stepProps(dt) {
+    for (let i = this.props.length - 1; i >= 0; i--) {
+      const q = this.props[i];
+      q.age += dt;
+      q.t -= dt;
+      if (q.t <= 0) this.dropProp(q);
+    }
+  }
+
+  dropProp(q) {
+    this.props.splice(this.props.indexOf(q), 1);
+    this.event({ t: 'gone', k: q.kind, x: q.x, y: q.y, p: q.p });
   }
 
   stepCrates(dt) {
@@ -536,7 +775,7 @@ export class Match {
     const minRally = this.party ? 1 : 2;
     if (this.nextCrate <= 0 && this.crates.length < maxCrates && this.rally >= minRally) {
       this.nextCrate = this.rollCrateDelay();
-      const item = rollItem(this.rand, this.party);
+      const item = rollItem(this.rand, this.party, this.items);
       this.crates.push({
         x: 0.18 + this.rand() * 0.64,
         y: 0.38 + this.rand() * 0.24,
@@ -570,6 +809,7 @@ export class Match {
     this.phase = 'point';
     this.phaseTime = SERVE_DELAY;
     this.crates = [];
+    this.props = [];
     this.shake = 1.2;
     for (const p of this.paddles) { p.shield = 0; p.pending = null; p.magnet = 0; }
     this.event({
@@ -603,16 +843,24 @@ export class Match {
         +p.x.toFixed(4), +this.paddleWidth(i).toFixed(4),
         p.shield > 0 ? 1 : 0, p.frost > 0 ? 1 : 0, p.pending ? 1 : 0,
         p.shrink > 0 ? 1 : 0, p.magnet > 0 ? 1 : 0,
+        +p.arco.toFixed(1),
       ]),
       bl: this.balls.map((b) => [
         +b.x.toFixed(4), +b.y.toFixed(4), +b.vx.toFixed(3), +b.vy.toFixed(3),
         b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
-        b.held >= 0 ? 1 : 0, b.owner,
+        b.held >= 0 ? 1 : 0, b.owner, +b.mirror.toFixed(1),
       ]),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
       ev: this.outbox,
       sh: +this.shake.toFixed(2),
     };
+    // Appended fields ride at the end of their arrays, and props only when
+    // there are any, so a phone on an older build just never looks at them.
+    if (this.props.length) {
+      snap.pr = this.props.map((q) => [
+        q.kind, +q.x.toFixed(3), +q.y.toFixed(3), +q.size.toFixed(3), +q.t.toFixed(2), q.p, q.hits,
+      ]);
+    }
     this.outbox = [];
     return snap;
   }
@@ -640,6 +888,7 @@ export class Match {
       pad.pending = p[4] ? { id: this.chars[i].special.id, until: Infinity } : null;
       pad.shrink = p[5] ? 1 : 0;
       pad.magnet = p[6] ? 1 : 0;
+      pad.arco = p[7] || 0;                // absent from an older host
     });
 
     // Snapshots arrive at 30 Hz but we draw more often than that, so hard-
@@ -654,6 +903,7 @@ export class Match {
         speed: Math.hypot(b[2], b[3]), fire: b[4] ? 1 : 0, spin: 0,
         owner: b[9] ?? -1,      // who last touched it — drives the trail flair
         ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0, held: b[8] ? 0 : -1, hx: 0,
+        mirror: b[10] || 0,
       };
       if (!was) return fresh;
       const gap = Math.hypot(was.x - fresh.x, was.y - fresh.y);
@@ -666,6 +916,18 @@ export class Match {
       x: c[0], y: c[1], spin: c[2], vx: 0, vy: 0, item: itemById(c[3]),
     }));
 
+    // Props keep a local age, so a spire rises once rather than on every
+    // packet. Same kind, owner and spot means the same prop; a moved one
+    // is new and rises again.
+    const before = this.props;
+    this.props = (s.pr || []).map((q) => {
+      const was = before.find((o) => o.kind === q[0] && o.p === q[5] && Math.abs(o.x - q[1]) < 1e-3);
+      return {
+        kind: q[0], x: q[1], y: q[2], size: q[3], t: q[4], p: q[5], hits: q[6] || 0,
+        age: was ? was.age : 0,
+      };
+    });
+
     for (const e of s.ev) this.events.push(e);
     return true;
   }
@@ -675,6 +937,7 @@ export class Match {
     if (this.phase !== 'play') return;
     for (const b of this.balls) {
       const rad = ballRadius(b);
+      const x0 = b.x, y0 = b.y;
       b.x = clamp(b.x + b.vx * dt, rad, 1 - rad);
       b.y += b.vy * dt;
       // Ease toward wherever the host last said this ball was, so the
@@ -686,7 +949,21 @@ export class Match {
         b.x += (b.tx - b.x) * k;
         b.y += (b.ty - b.y) * k;
       }
+      b.mirror = Math.max(0, (b.mirror || 0) - dt);
+      // Bounce off props here as well, rather than drawing the ball sailing
+      // through a spire for the packet or two before the host's bounce lands.
+      // The host's word still wins: this only drops the stale target so the
+      // easing can't drag the ball back through.
+      if (this.props.length && b.held < 0 && this.collideProps(b, x0, y0, false)) {
+        b.tx = null;
+        b.ty = null;
+      }
     }
+    for (const q of this.props) {
+      q.age += dt;
+      q.t = Math.max(0, q.t - dt);
+    }
+    for (const p of this.paddles) p.arco = Math.max(0, (p.arco || 0) - dt);
     for (const c of this.crates) c.spin += dt * 1.4;
     this.shake = Math.max(0, this.shake - dt * 2.6);
   }

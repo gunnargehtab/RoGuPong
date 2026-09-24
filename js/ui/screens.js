@@ -9,7 +9,7 @@ import { drawText, measure, GLYPH_H } from './pixelfont.js';
 import { renderLogoTo } from './logo.js';
 import { CHARACTERS, byId as charById } from '../game/characters.js';
 import { STAGES } from '../game/stages.js';
-import { ITEMS } from '../game/items.js';
+import { itemById } from '../game/items.js';
 import { drawFighter } from '../game/render.js';
 import { drawQrToCanvas } from '../net/qr.js';
 import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
@@ -43,6 +43,28 @@ export function pixelLabel(text, opts = {}) {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/**
+ * A crate's glyph, drawn in the pixel font exactly as it appears on court.
+ * Markup leaves a <span data-glyph="id"> where one goes; fillGlyphs swaps
+ * the canvases in once the HTML is parsed.
+ */
+const glyphSlot = (id) => `<span data-glyph="${esc(id)}"></span>`;
+function fillGlyphs(root) {
+  for (const slot of root.querySelectorAll('[data-glyph]')) {
+    const item = itemById(slot.dataset.glyph);
+    const c = pixelLabel(item.glyph, { scale: 2, color: item.color, tracking: 0 });
+    c.className = 'crate-glyph';
+    c.style.display = 'inline-block';
+    c.style.verticalAlign = 'middle';
+    c.style.margin = '0 5px 0 0';
+    slot.replaceWith(c);
+  }
+}
+
+/** A crate as a compact line: glyph, then its name in its own colour. */
+const crateName = (item) =>
+  `${glyphSlot(item.id)}<b style="color:${item.color}">${esc(item.name)}</b>`;
 
 export class Screens {
   constructor(root, app) {
@@ -149,10 +171,11 @@ export class Screens {
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn small secondary" data-action="toggle-quality">
-          Graphics: ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
+          Graphics set to ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
       </div>
       <small class="muted" style="display:block;margin-top:6px">
-        Fast drops the glows and scanlines. Older phones get a much smoother game.</small>`;
+        Tap to switch. Fast drops the glows, scanlines and animated scenery.
+        Older phones get a much smoother game.</small>`;
     wrap.appendChild(who);
 
     const input = who.querySelector('#pname');
@@ -179,7 +202,14 @@ export class Screens {
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('HOW TO PLAY', { scale: 3 }));
 
-    const items = ITEMS.map((i) => `<li><b>${esc(i.name)}</b> — ${esc(i.blurb)}</li>`).join('');
+    // Crates by stage. MULTIBALL is dealt everywhere, so it is told once.
+    const multi = itemById('multi');
+    const crateItem = (i) => `<li style="margin-top:3px">${crateName(i)} — ${esc(i.blurb)}</li>`;
+    const crateList = (list) => `<ul style="margin:4px 0 0;padding:0;list-style:none">${list}</ul>`;
+    const items = crateList(`<li style="margin-top:3px">${crateName(multi)} — ${esc(multi.blurb)} On every stage.</li>`)
+      + STAGES.map((st) => `
+        <p style="margin-top:8px"><b style="color:${st.accent}">${esc(st.name)}</b></p>
+        ${crateList(st.items.filter((id) => id !== 'multi').map((id) => crateItem(itemById(id))).join(''))}`).join('');
     const chars = CHARACTERS.map((c) =>
       `<li><b>${esc(c.name)}</b> — ${esc(c.special.name)}: ${esc(c.special.desc)}</li>`).join('');
 
@@ -200,11 +230,13 @@ export class Screens {
       <p>Every return charges your special. Fill it and the button lights up.</p>
       <ul style="margin:6px 0 0;padding-left:16px">${chars}</ul>
       <h3 style="margin-top:12px">Crates</h3>
-      <p>Hit one with the ball and the pickup is yours.</p>
-      <ul style="margin:6px 0 0;padding-left:16px">${items}</ul>
+      <p>Hit one with the ball and the pickup is yours. Every stage deals its
+      own four: two classics that suit the place, and one you'll find nowhere else.</p>
+      ${items}
       <h3 style="margin-top:12px">Pressure</h3>
       <p>Past twenty returns the paddles start shrinking and the ball keeps
       accelerating. No rally lasts forever.</p>`;
+    fillGlyphs(panel);
     wrap.appendChild(panel);
 
     const back = document.createElement('button');
@@ -643,6 +675,8 @@ export class Screens {
       </div>
       <div style="margin:8px 0"><b style="color:${st.accent}">${esc(st.name)}</b>
         <br><small>${esc(st.blurb)}</small></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:0 0 10px;font-size:0.72rem;letter-spacing:0.06em">
+        ${st.items.map((id) => `<span style="white-space:nowrap">${crateName(itemById(id))}</span>`).join('')}</div>
       ${isHost ? `<div class="row">
         <button class="btn small secondary" data-action="cycle-stage">Next stage</button>
         <button class="btn small secondary" data-action="cycle-target">First to ${target}</button>
@@ -650,6 +684,7 @@ export class Screens {
       <div class="row" style="margin-top:8px">
         <button class="btn small ${party ? '' : 'secondary'}" data-action="cycle-party">${party ? '🎉 Party mode' : 'Classic mode'}</button>
       </div>` : `<small class="muted">First to ${target}${party ? ' · 🎉 PARTY MODE' : ''}</small>`}`;
+    fillGlyphs(stageSel);
     wrap.appendChild(stageSel);
 
     const emotes = document.createElement('div');

@@ -6,9 +6,9 @@
 // so you are always the paddle at the bottom.
 
 import { drawText, measure } from '../ui/pixelfont.js';
-import { PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, ballRadius } from './match.js';
+import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, ballRadius } from './match.js';
+import { itemById } from './items.js';
 
-const COURT_ASPECT = 0.56;      // width / height
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
 const HUD_TOP = 0.105;          // fraction of canvas height
 const HUD_BOTTOM = 0.155;
@@ -68,6 +68,162 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/* ------------------------------------------------------------------ */
+/* Stage props — painted once per size in art pixels, like the scenery */
+
+const PROP_RISE = 0.35;         // seconds a prop takes to rise out of the floor
+const PROP_FALL = 0.5;          // ... and to crumble or melt away at the end
+const ARCO_COLOR = itemById('arco').color;
+
+// Candoglia marble, lit from the left like the rooftop's low sun.
+const MARBLE = {
+  ink: '#2a2233', shade: '#9a8c9c', mid: '#d8ccc3', lit: '#f7efe5',
+  niche: '#4a3d58', gold: '#ffcf5a', slab: '#a99ba3', slabVein: '#968893', shadow: '#6f6376',
+};
+const SNOW = ['#ffffff', '#f6f9ff', '#e6eefd', '#c9d6f5', '#a3b4e6', '#7f90cc'];
+const ALPENGLOW = '#ffc9de';        // the crest catching the sunset
+const SNOW_INK = '#343a78';
+
+/**
+ * A pixel grid painter: set cells, ring the silhouette in ink, blit once.
+ * Sprites are tiny (a few hundred cells) and painted only when their size
+ * changes, so plain fillRects are plenty.
+ */
+function pixelSprite(w, h, paint, outline) {
+  const cells = new Array(w * h).fill(null);
+  const set = (x, y, c) => {
+    x = Math.round(x); y = Math.round(y);
+    if (x >= 0 && y >= 0 && x < w && y < h) cells[y * w + x] = c;
+  };
+  paint(set);
+  if (outline) {
+    const ring = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (cells[y * w + x]) continue;
+        const n = (x > 0 && cells[y * w + x - 1]) || (x < w - 1 && cells[y * w + x + 1])
+          || (y > 0 && cells[(y - 1) * w + x]) || (y < h - 1 && cells[(y + 1) * w + x]);
+        if (n) ring.push(y * w + x);
+      }
+    }
+    for (const i of ring) cells[i] = outline;
+  }
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const octx = off.getContext('2d');
+  for (let i = 0; i < cells.length; i++) {
+    if (!cells[i]) continue;
+    octx.fillStyle = cells[i];
+    octx.fillRect(i % w, (i / w) | 0, 1, 1);
+  }
+  return off;
+}
+
+/** The round slab the pinnacle stands on: exactly the circle the ball bounces off. */
+function paintPlinth(rA, hw) {
+  const d = rA * 2 + 1;
+  return pixelSprite(d, d, (set) => {
+    for (let y = 0; y < d; y++) {
+      for (let x = 0; x < d; x++) {
+        const dx = x - rA, dy = y - rA;
+        const dist = Math.hypot(dx, dy);
+        if (dist > rA + 0.3) continue;
+        // A slab seen from above, a shade darker than the pinnacle so the
+        // shaft stands off it.
+        let c = MARBLE.slab;
+        if (dist > rA - 0.9) c = MARBLE.ink;
+        else if (dist > rA - 2.2) c = dx + dy < 0 ? MARBLE.lit : MARBLE.shade;   // bevelled rim
+        else if (dist > rA - 3.2 && ((x + y) & 1)) c = MARBLE.slabVein;
+        // The shaft's shadow falls to the right, away from the sun.
+        if (dist <= rA - 0.9 && dx > hw && dx < hw + rA * 0.55 && Math.abs(dy + 1) < 2.2) c = MARBLE.shadow;
+        set(x, y, c);
+      }
+    }
+  });
+}
+
+/** The pinnacle itself: shaft, niche, crocketed spire and a gold figure on top. */
+function paintSpireShaft(rA, hw) {
+  const bodyH = Math.max(6, Math.round(rA * 1.15));
+  const spireH = Math.max(6, Math.round(rA * 1.3));
+  const w = hw * 2 + 5, h = bodyH + spireH + 6;
+  const cx = hw + 2;
+  const sprite = pixelSprite(w, h, (set) => {
+    const at = (row) => h - 1 - row;                     // rows counted up from the base
+    const tone = (x, half) => (x <= -half + 1 ? MARBLE.lit : x >= half - 1 ? MARBLE.shade : MARBLE.mid);
+    for (let r = 0; r < bodyH; r++) {
+      const band = r < 2 || r === bodyH - 1;             // plinth and cornice mouldings stand proud
+      const half = band ? hw + 1 : hw;
+      for (let x = -half; x <= half; x++) set(cx + x, at(r), tone(x, half));
+    }
+    // A gothic niche, pointed at the top.
+    const n0 = Math.round(bodyH * 0.3), n1 = Math.round(bodyH * 0.78);
+    for (let r = n0; r <= n1; r++) {
+      const nw = r === n1 ? 0 : Math.max(0, Math.min(1, hw - 2));
+      for (let x = -nw; x <= nw; x++) set(cx + x, at(r), MARBLE.niche);
+    }
+    // Corner pinnacles on the cornice.
+    for (const side of [-1, 1]) {
+      for (let r = bodyH; r < bodyH + 3; r++) set(cx + side * hw, at(r), side < 0 ? MARBLE.lit : MARBLE.shade);
+    }
+    // The spire tapers to a point, crockets up both edges.
+    for (let r = 0; r < spireH; r++) {
+      const half = Math.round((hw - 1) * (1 - r / spireH));
+      for (let x = -half; x <= half; x++) set(cx + x, at(bodyH + r), tone(x, Math.max(1, half)));
+      if (r % 3 === 1 && half > 0) {
+        set(cx - half - 1, at(bodyH + r), MARBLE.lit);
+        set(cx + half + 1, at(bodyH + r), MARBLE.shade);
+      }
+    }
+    // The little gilded figure on top.
+    const top = bodyH + spireH;
+    set(cx, at(top), MARBLE.gold);
+    set(cx - 1, at(top + 1), MARBLE.gold); set(cx, at(top + 1), MARBLE.gold); set(cx + 1, at(top + 1), MARBLE.gold);
+    set(cx, at(top + 2), MARBLE.gold);
+    set(cx, at(top + 3), '#fff2c4');
+  }, MARBLE.ink);
+  return { sprite, cx };
+}
+
+/** A wind-packed snowbank, crest up; `hits` bites chunks out of it. */
+function paintDrift(wA, hA, hits, floor) {
+  const h = hA + 2;                                     // headroom for the ink line
+  return pixelSprite(wA, h, (set) => {
+    for (let x = 0; x < wA; x++) {
+      const u = ((x + 0.5) / wA) * 2 - 1;
+      // Steep-ended, so the bank stops in a short wall rather than a long
+      // slope a ball could visibly bounce off thin air above.
+      const body = Math.pow(Math.max(0, 1 - u * u * u * u), 0.3);
+      const lumps = 1 + 0.10 * Math.sin(u * 9 + 1.3) + 0.06 * Math.sin(u * 23 + 0.4);
+      // The mound sits on a floor as high as the bounce line, so a block
+      // shrinks and bites the mound but never the part a ball bounces off.
+      const mound = hA - floor;
+      let top = floor + mound * body * lumps * (1 - 0.34 * hits);
+      // A block leaves a bite where the snow gave.
+      if (hits) top -= mound * 0.6 * Math.max(0, 1 - Math.abs(u + 0.18) * 4);
+      // Never below the line the ball actually bounces off, bitten or not.
+      const colH = Math.max(floor, Math.min(hA, Math.round(top)));
+      for (let r = 0; r < colH; r++) {
+        const depth = colH - 1 - r;                    // 0 at the crest
+        const y = h - 1 - r;
+        let c;
+        if (depth === 0) c = x % 5 === 2 ? SNOW[0] : ALPENGLOW;
+        else if (depth === 1) c = SNOW[1];
+        else {
+          // Bands deepen toward the base, dithered where they meet.
+          const f = r / Math.max(1, colH);
+          const band = f > 0.6 ? 2 : f > 0.28 ? 3 : 4;
+          const seam = (f > 0.55 && f < 0.66) || (f > 0.23 && f < 0.33);
+          c = SNOW[seam && ((x + y) & 1) ? band + 1 : band];
+        }
+        set(x, y, c);
+      }
+      if (colH > 0 && x % 7 === 3 && colH > 3) set(x, h - 1 - Math.round(colH * 0.45), SNOW[1]);
+    }
+  }, SNOW_INK);
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -78,8 +234,8 @@ export class Renderer {
     this.trails = new Map();
     this.scanlines = null;
     this.gradCache = new Map();
-    this.bgCache = null;
-    this.bgCacheFor = null;
+    this.sceneCache = {};
+    this.ap = 2;
     // 'high' draws the full 16-bit treatment. 'low' drops everything that costs
     // a lot of fill rate for a little polish — canvas shadows above all, which
     // are the single most expensive thing an older phone GPU can be asked to do
@@ -132,11 +288,11 @@ export class Renderer {
     this.ctx.imageSmoothingEnabled = false;
     this.scanlines = null;
     this.vignette = null;
-    this.skyGradient = null;
-    this.skyGradientFor = null;
     this.gradCache.clear();
-    this.bgCache = null;
-    this.bgCacheFor = null;
+    // The scene cache survives: stage art depends only on the CSS size (its
+    // keys carry it), not on DPR or quality, so a Graphics switch — or the
+    // automatic one, mid-match on a phone already struggling — costs no repaint.
+    this.ap = this.artPixel();
     this.layout();
   }
 
@@ -194,8 +350,9 @@ export class Renderer {
       ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     }
 
-    this.drawBackdrop(stage, time, shake);
+    this.drawBackdrop(stage, time, true);
     this.drawCourt(m, stage, flip, chars, view, time);
+    this.drawProps(m, flip, time);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
     this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time);
@@ -207,121 +364,116 @@ export class Renderer {
   }
 
   /* ---------------------------------------------------------------- */
-  /* Backdrop                                                          */
+  /* Scenery                                                           */
 
   /**
-   * The backdrop is most of the fill rate a frame costs, and in 'low' none of
-   * its animation (parallax drift, star twinkle, window flicker) is worth
-   * that. Paint it once per stage and size into an offscreen canvas and blit —
-   * one composite instead of a hundred fills.
+   * Stage art is painted in art pixels — a canvas a few times smaller than the
+   * screen — and scaled up with nearest-neighbour sampling. That is the 16-bit
+   * look and the cheap path at once: each scene is painted once per stage and
+   * size, so however detailed the painting, a frame costs one blit. 'high' adds
+   * the scene's small animation layer on top (lamp flicker, water shimmer,
+   * drifting snow); 'low' shows the still painting.
    */
-  drawBackdrop(stage, time, shake) {
-    if (this.quality === 'low') {
-      const M = SHAKE_MARGIN;
-      const key = stage.id + ':' + this.W + 'x' + this.H;
-      if (this.bgCacheFor !== key) {
-        const off = document.createElement('canvas');
-        off.width = Math.ceil((this.W + M * 2) * this.dpr);
-        off.height = Math.ceil((this.H + M * 2) * this.dpr);
-        const octx = off.getContext('2d', { alpha: false });
-        octx.setTransform(this.dpr, 0, 0, this.dpr, M * this.dpr, M * this.dpr);
-        this.paintBackdrop(octx, stage, 0, 0);
-        this.bgCache = off;
-        this.bgCacheFor = key;
-      }
-      this.ctx.drawImage(this.bgCache, -M, -M, this.W + M * 2, this.H + M * 2);
-      return;
-    }
-    this.paintBackdrop(this.ctx, stage, time, shake);
+  artPixel() {
+    return Math.max(2, Math.round(Math.min(this.W, this.H) / 180));
   }
 
-  paintBackdrop(ctx, stage, time, shake) {
-    let sky;
-    if (ctx === this.ctx) {
-      if (!this.skyGradient || this.skyGradientFor !== stage.id) {
-        this.skyGradient = this.makeSky(ctx, stage);
-        this.skyGradientFor = stage.id;
-      }
-      sky = this.skyGradient;
-    } else {
-      sky = this.makeSky(ctx, stage);
+  sceneLayer(slot, key, w, h, paint) {
+    let entry = this.sceneCache[slot];
+    if (!entry || entry.key !== key) {
+      const off = document.createElement('canvas');
+      off.width = Math.max(1, Math.ceil(w / this.ap));
+      off.height = Math.max(1, Math.ceil(h / this.ap));
+      const octx = off.getContext('2d', { alpha: false });
+      paint(octx, off.width, off.height);
+      entry = { key, canvas: off };
+      this.sceneCache[slot] = entry;
     }
-    ctx.fillStyle = sky;
+    return entry.canvas;
+  }
+
+  drawBackdrop(stage, time, hud = false) {
     // Overdraw the edges: screen shake translates the canvas, and a backdrop
     // that stopped at the old bounds would leave the previous frame showing in
     // the gap.
-    ctx.fillRect(-SHAKE_MARGIN, -SHAKE_MARGIN, this.W + SHAKE_MARGIN * 2, this.H + SHAKE_MARGIN * 2);
-
-    if (stage.stars) {
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      const count = this.quality === 'low' ? Math.min(stage.stars, 20) : stage.stars;
-      for (let i = 0; i < count; i++) {
-        const x = ((i * 97) % 100) / 100 * this.W;
-        const y = ((i * 53) % 60) / 100 * this.H * 0.9;
-        const tw = 0.5 + 0.5 * Math.sin(time * 2 + i);
-        ctx.globalAlpha = 0.25 + tw * 0.55;
-        const s = i % 7 === 0 ? 2 : 1;
-        ctx.fillRect(Math.round(x), Math.round(y), s, s);
-      }
-      ctx.globalAlpha = 1;
+    const M = SHAKE_MARGIN;
+    const ap = this.ap;
+    const scene = stage.scene;
+    const key = `${stage.id}:${this.W}x${this.H}@${ap}`;
+    const live = this.quality !== 'low' && scene.animateBackdrop;
+    let art = this.sceneLayer('backdrop', key,
+      this.W + M * 2, this.H + M * 2, (octx, w, h) => scene.backdrop(octx, w, h));
+    if (hud && !live) {
+      // A still backdrop gets its HUD scrim baked in: free every frame.
+      const base = art;
+      art = this.sceneLayer('backdropHud', key, this.W + M * 2, this.H + M * 2, (octx, w, h) => {
+        octx.drawImage(base, 0, 0);
+        this.paintHudScrim(octx, w, h);
+      });
     }
-
-    const drift = Math.sin(time * 0.12) * this.W * 0.012;
-    this.drawSkyline(ctx, stage.far, drift * 0.5 + shake * 3, time);
-    this.drawSkyline(ctx, stage.near, drift + shake * 6, time);
-
-    if (stage.water) {
-      const wy = stage.water.top * this.H;
-      ctx.fillStyle = stage.water.color;
-      ctx.fillRect(-SHAKE_MARGIN, wy, this.W + SHAKE_MARGIN * 2, this.H - wy + SHAKE_MARGIN);
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = stage.water.shimmer;
-      const shimmer = this.quality === 'low' ? 8 : 26;
-      for (let i = 0; i < shimmer; i++) {
-        const y = wy + ((i * 37) % 100) / 100 * (this.H - wy);
-        const w = 12 + ((i * 17) % 40);
-        const x = ((i * 83) % 100) / 100 * this.W + Math.sin(time * 1.6 + i) * 10;
-        ctx.fillRect(x, y, w, 2);
-      }
-      ctx.globalAlpha = 1;
-    }
+    const ctx = this.ctx;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(art, -M, -M, art.width * ap, art.height * ap);
+    if (!live) return;
+    ctx.save();
+    ctx.translate(-M, -M);
+    ctx.scale(ap, ap);
+    scene.animateBackdrop(ctx, art.width, art.height, time);
+    // An animated one gets it on top of the animation, or a lamp flickering
+    // in a strip would flash at full brightness against the dimmed rest.
+    if (hud) this.paintHudScrim(ctx, art.width, art.height);
+    ctx.restore();
   }
 
-  makeSky(ctx, stage) {
-    const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, stage.sky[0]);
-    g.addColorStop(0.55, stage.sky[1]);
-    g.addColorStop(1, stage.sky[2]);
-    return g;
+  /**
+   * During a match the scores and names sit on the strips of backdrop above
+   * and below the court, and a daylit stage (Brera's paving, the Duomo's
+   * marble) would swallow the dimmer HUD text. Darken those strips in a few
+   * flat bands, deepest at the screen edge. Drawn in art pixels, into a baked
+   * copy of the backdrop on fast graphics or over the animation layer on full;
+   * the menus keep the full view either way.
+   */
+  paintHudScrim(ctx, w, h) {
+    const M = SHAKE_MARGIN;
+    const ap = this.ap;
+    const c = this.court;
+    const top = Math.round((c.y + M) / ap);
+    const bottom = Math.round((c.y + c.h + M) / ap);
+    const BANDS = 5;
+    ctx.fillStyle = '#07040f';
+    for (let k = 0; k < BANDS; k++) {
+      ctx.globalAlpha = 0.5 - k * 0.09;
+      const th = Math.round(top * (k + 1) / BANDS) - Math.round(top * k / BANDS);
+      ctx.fillRect(0, Math.round(top * k / BANDS), w, th);
+      const bh = h - bottom;
+      const y0 = h - Math.round(bh * (k + 1) / BANDS);
+      ctx.fillRect(0, y0, w, h - Math.round(bh * k / BANDS) - y0);
+    }
+    ctx.globalAlpha = 1;
   }
 
-  drawSkyline(ctx, layer, offset, time) {
-    if (!layer) return;
-    const baseY = layer.y * this.H;
-    ctx.fillStyle = layer.color;
-    for (const s of layer.shapes) {
-      const x = s.x * this.W + offset;
-      const w = s.w * this.W;
-      const h = s.h * this.H;
-      ctx.fillRect(Math.round(x), Math.round(baseY - h), Math.ceil(w), Math.ceil(h + this.H));
-      if (s.spire) {
-        ctx.beginPath();
-        ctx.moveTo(x, baseY - h);
-        ctx.lineTo(x + w / 2, baseY - h - h * 0.5);
-        ctx.lineTo(x + w, baseY - h);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-    // A few lit windows.
-    if (this.quality === 'low') return;
-    ctx.fillStyle = 'rgba(255,220,140,0.20)';
-    for (let i = 0; i < 40; i++) {
-      const s = layer.shapes[i % layer.shapes.length];
-      const x = s.x * this.W + offset + ((i * 13) % Math.max(1, s.w * this.W - 6)) + 3;
-      const y = baseY - s.h * this.H + 6 + ((i * 29) % Math.max(1, s.h * this.H - 10));
-      if (Math.sin(time * 0.7 + i * 2.3) > -0.2) ctx.fillRect(Math.round(x), Math.round(y), 2, 3);
-    }
+  /** The court floor: the same place seen from above. Called inside the court clip. */
+  drawCourtFloor(stage, time) {
+    const c = this.court;
+    const ap = this.ap;
+    const scene = stage.scene;
+    // Keyed on the art pixel too: two screens can share a court size but not
+    // an art pixel, and the cache now outlives a resize.
+    const art = this.sceneLayer('court', `${stage.id}:${c.w}x${c.h}@${ap}`,
+      c.w, c.h, (octx, w, h) => scene.court(octx, w, h));
+    // The art canvas rounds up to whole art pixels; centre the overhang so a
+    // floor painted symmetric stays symmetric on screen.
+    const ox = c.x - Math.floor((art.width * ap - c.w) / 2);
+    const oy = c.y - Math.floor((art.height * ap - c.h) / 2);
+    const ctx = this.ctx;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(art, ox, oy, art.width * ap, art.height * ap);
+    if (this.quality === 'low' || !scene.animateCourt) return;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(ap, ap);
+    scene.animateCourt(ctx, art.width, art.height, time);
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- */
@@ -342,17 +494,7 @@ export class Renderer {
     roundRect(ctx, c.x, c.y, c.w, c.h, 10);
     ctx.clip();
 
-    if (stage.checker) {
-      const n = 8;
-      const s = c.w / n;
-      for (let y = 0; y * s < c.h; y++) {
-        for (let x = 0; x < n; x++) {
-          if ((x + y) % 2) continue;
-          ctx.fillStyle = 'rgba(255,255,255,0.025)';
-          ctx.fillRect(c.x + x * s, c.y + y * s, s, s);
-        }
-      }
-    }
+    this.drawCourtFloor(stage, time);
 
     // Centre line
     ctx.strokeStyle = stage.line;
@@ -405,6 +547,111 @@ export class Renderer {
   /* ---------------------------------------------------------------- */
   /* Actors                                                            */
 
+  /** A prop sprite, painted once per size and art pixel. */
+  propSprite(key, make) {
+    if (!this.propArt) this.propArt = new Map();
+    let art = this.propArt.get(key);
+    if (!art) {
+      if (this.propArt.size > 24) this.propArt.clear();    // old screen sizes
+      art = make();
+      this.propArt.set(key, art);
+    }
+    return art;
+  }
+
+  /**
+   * SPIRE pinnacles and AVALANCHE snowdrifts. Both are cached pixel sprites;
+   * rising and crumbling are just how much of the sprite shows above the
+   * floor, so a prop costs a couple of blits in either quality.
+   */
+  drawProps(m, flip, time) {
+    if (!m.props || !m.props.length) return;
+    for (const q of m.props) {
+      if (q.kind === 'spire') this.drawSpire(q, flip, time);
+      else if (q.kind === 'drift') this.drawDrift(q, flip, time);
+    }
+  }
+
+  /** How much of a prop stands: rising at the start, sinking at the end. */
+  propStanding(q) {
+    const rise = Math.min(1, (q.age || 0) / PROP_RISE);
+    const fall = Math.min(1, Math.max(0, q.t) / PROP_FALL);
+    return Math.min(rise * (2 - rise), fall);            // ease out of the floor
+  }
+
+  drawSpire(q, flip, time) {
+    const ctx = this.ctx;
+    const ap = this.ap;
+    // The plinth is the collision circle, so it is sized from the court width
+    // and drawn round on screen whichever way up the view is.
+    const rA = Math.max(4, Math.round((q.size * this.court.w) / ap));
+    const hw = Math.max(2, Math.round(rA * 0.36));
+    const plinth = this.propSprite(`plinth:${rA}:${hw}`, () => paintPlinth(rA, hw));
+    const shaft = this.propSprite(`shaft:${rA}:${hw}`, () => paintSpireShaft(rA, hw));
+    const [sx, sy] = this.pt(q.x, q.y, flip);
+    const k = this.propStanding(q);
+    const ending = q.t < PROP_FALL;
+    // Crumbling: the whole thing shudders as it goes down.
+    const jit = ending ? Math.round(Math.sin(time * 70)) * ap : 0;
+    const px = Math.round(sx - (rA + 0.5) * ap) + jit;
+    const py = Math.round(sy - (rA + 0.5) * ap);
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = Math.min(1, 0.35 + k);
+    ctx.drawImage(plinth, px, py, plinth.width * ap, plinth.height * ap);
+    ctx.globalAlpha = 1;
+    // Upright on screen for both views; only its footing flips with the court.
+    const show = Math.round(shaft.sprite.height * k);
+    if (show > 0) {
+      const baseY = Math.round(sy + ap);                  // stands on the slab's centre
+      const left = Math.round(sx - (shaft.cx + 0.5) * ap) + jit;
+      this.glow('rgba(255,214,150,0.35)', 8);
+      ctx.drawImage(shaft.sprite, 0, 0, shaft.sprite.width, show,
+        left, baseY - show * ap, shaft.sprite.width * ap, show * ap);
+    }
+    ctx.restore();
+  }
+
+  drawDrift(q, flip, time) {
+    const ctx = this.ctx;
+    const c = this.court;
+    const ap = this.ap;
+    // As wide as the hitbox (the half span plus half a ball either side), and
+    // never lower than the line a ball bounces off, so the snow is always
+    // where the bounce is.
+    const reach = q.size + BALL_R * 0.5;
+    const wA = Math.max(6, Math.round((reach * 2 * c.w) / ap));
+    const line = Math.abs((q.p === 0 ? 1 : 0) - q.y) * c.h / ap;
+    const floor = Math.round(line) + 1;
+    const hA = floor + Math.max(3, Math.round(0.018 * c.h / ap));
+    const hits = Math.min(1, q.hits || 0);
+    const art = this.propSprite(`drift:${wA}:${hA}:${hits}:${floor}`, () => paintDrift(wA, hA, hits, floor));
+    const k = this.propStanding(q);
+    const show = Math.round(art.height * k);
+    if (show <= 0) return;
+    const [x0, edge] = this.pt(q.x - reach, q.p === 0 ? 1 : 0, flip);
+    const left = Math.round(x0);
+    const up = Math.round(edge) >= c.y + c.h / 2;         // this goal is at the bottom of the screen
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(left, Math.round(edge));
+    if (!up) ctx.scale(1, -1);                            // the far goal's drift hangs toward the court
+    ctx.drawImage(art, 0, 0, art.width, show, 0, -show * ap, art.width * ap, show * ap);
+    if (this.quality !== 'low' && k >= 1) {
+      // A few crystals catching the sun.
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 3; i++) {
+        const tw = Math.floor(time * 2.5 + i * 1.7);
+        const fx = ((tw * 37 + i * 53) % 97) / 97;
+        if (Math.sin(time * 9 + i * 2) < 0.2) continue;
+        const col = Math.floor(fx * wA);
+        ctx.fillRect(col * ap, -Math.round(show * (0.55 + 0.3 * ((i * 0.37) % 1))) * ap, ap, ap);
+      }
+    }
+    ctx.restore();
+  }
+
   drawCrates(m, flip, time) {
     const ctx = this.ctx;
     const r = CRATE_R * this.court.w;
@@ -439,7 +686,6 @@ export class Renderer {
       const r = ballRadius(b) * this.court.w;
       const hot = b.fire > 0;
       const ghosted = b.ghost > 0;
-      const beachy = b.beach > 0;
 
       // A ghost ball flickers: brief flashes mid-court, but always visible in
       // the last stretch before either goal so the save stays makeable.
@@ -464,57 +710,95 @@ export class Renderer {
       // The trail wears the flair of whoever last touched the ball, so your
       // returns carry your look. Fire (turbo/afterburn) always outranks it.
       const flair = b.owner >= 0 ? flairs[b.owner] : 'none';
-      for (let i = 0; i < trail.length; i++) {
-        const [tx, ty] = trail[i];
-        const [sx, sy] = this.pt(tx, ty, flip);
-        const f = i / trail.length;
-        let alpha = f * (hot ? 0.55 : 0.32);
-        let color = '#ffffff';
-        if (hot) color = i % 2 ? '#ffd166' : '#ff5b2e';
-        else if (flair === 'rainbow') { color = `hsl(${Math.round(f * 300 + time * 180) % 360} 90% 65%)`; alpha = f * 0.5; }
-        else if (flair === 'flame') { color = i % 2 ? '#ffd166' : '#ff7a3d'; alpha = f * 0.45; }
-        else if (flair === 'star') { color = '#ffffff'; alpha = f * (i % 3 === 0 ? 0.6 : 0.15); }
-        else if (flair === 'royal') { color = '#ffd93b'; alpha = f * 0.45; }
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = color;
-        const rr = r * (0.35 + f * 0.65);
-        ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
-      }
-      ctx.globalAlpha = 1;
 
-      const [sx, sy] = this.pt(b.x, b.y, flip);
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      if (beachy) {
-        this.glow('#ff5b5b', 18);
-        const stripes = ['#ff5b5b', '#ffffff', '#ffd93b', '#ffffff', '#3da5ff'];
-        const sh = (r * 2) / stripes.length;
-        for (let i = 0; i < stripes.length; i++) {
-          ctx.fillStyle = stripes[i];
-          ctx.fillRect(sx - r, sy - r + i * sh, r * 2, Math.ceil(sh));
-        }
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        ctx.fillRect(sx - r * 0.55, sy - r * 0.8, r * 0.6, r * 0.3);
-      } else {
-        const caught = b.held >= 0;
-        const body = caught ? '#b8ffd9' : ghosted ? '#c9a2ff' : hot ? '#ffd166' : '#ffffff';
-        this.glow(caught ? '#3ddc84' : ghosted ? '#c9a2ff' : hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
-        ctx.fillStyle = body;
-        ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-        ctx.fillStyle = caught ? '#ffffff' : ghosted ? '#e9dcff' : hot ? '#fff3c4' : '#ffffff';
-        ctx.fillRect(sx - r * 0.45, sy - r * 0.9, r * 0.9, r * 0.5);
-        if (caught) {
-          // Crackle so a caught ball reads as "held", not "frozen".
-          ctx.fillStyle = '#3ddc84';
-          const k = Math.floor(time * 10) % 2;
-          ctx.fillRect(sx - r - 3, sy + (k ? -r : r) - 1, 2, 2);
-          ctx.fillRect(sx + r + 1, sy + (k ? r : -r) - 1, 2, 2);
+      // REFLECTION: a decoy runs mirror-image across the court's long axis,
+      // blinking with the ball if it is ghosted and dragging a mirrored trail.
+      // The fairness valve: it fades out before the last fifth of the court at
+      // either end, so the save is always made against the real ball. A sharp
+      // eye can tell them apart anyway — the decoy is a shade dimmer and a
+      // ripple keeps running through it, the way reflections do on water.
+      if (b.mirror > 0 && b.held < 0) {
+        const edge = Math.min(b.y, 1 - b.y);
+        const valve = Math.max(0, Math.min(1, (edge - 0.2) / 0.1));
+        const fade = alpha * 0.8 * valve * Math.min(1, b.mirror / 0.4);
+        if (fade > 0.01) {
+          this.drawTrail(trail, flip, r, hot, flair, time, fade, true);
+          const [dx, dy] = this.pt(1 - b.x, b.y, flip);
+          this.drawBallBody(b, dx, dy, r, fade, time);
+          ctx.save();
+          ctx.globalAlpha = fade;
+          const ry = Math.round(dy + Math.sin(time * 7 + b.id) * r * 0.55);
+          ctx.fillStyle = 'rgba(8,24,60,0.75)';
+          ctx.fillRect(dx - r - 2, ry, r * 2 + 4, Math.max(1, Math.round(r * 0.2)));
+          ctx.fillStyle = 'rgba(160,215,255,0.8)';
+          ctx.fillRect(dx - r - 1, ry + Math.max(1, Math.round(r * 0.2)), r * 2 + 2, 1);
+          ctx.restore();
         }
       }
-      ctx.restore();
+
+      this.drawTrail(trail, flip, r, hot, flair, time, 1, false);
+      const [sx, sy] = this.pt(b.x, b.y, flip);
+      this.drawBallBody(b, sx, sy, r, alpha, time);
     }
 
     for (const id of [...this.trails.keys()]) if (!live.has(id)) this.trails.delete(id);
+  }
+
+  /** A ball's trail; `mirrored` draws it reflected for the REFLECTION decoy. */
+  drawTrail(trail, flip, r, hot, flair, time, fade, mirrored) {
+    const ctx = this.ctx;
+    for (let i = 0; i < trail.length; i++) {
+      const [tx, ty] = trail[i];
+      const [sx, sy] = this.pt(mirrored ? 1 - tx : tx, ty, flip);
+      const f = i / trail.length;
+      let alpha = f * (hot ? 0.55 : 0.32);
+      let color = '#ffffff';
+      if (hot) color = i % 2 ? '#ffd166' : '#ff5b2e';
+      else if (flair === 'rainbow') { color = `hsl(${Math.round(f * 300 + time * 180) % 360} 90% 65%)`; alpha = f * 0.5; }
+      else if (flair === 'flame') { color = i % 2 ? '#ffd166' : '#ff7a3d'; alpha = f * 0.45; }
+      else if (flair === 'star') { color = '#ffffff'; alpha = f * (i % 3 === 0 ? 0.6 : 0.15); }
+      else if (flair === 'royal') { color = '#ffd93b'; alpha = f * 0.45; }
+      ctx.globalAlpha = alpha * fade;
+      ctx.fillStyle = color;
+      const rr = r * (0.35 + f * 0.65);
+      ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawBallBody(b, sx, sy, r, alpha, time) {
+    const ctx = this.ctx;
+    const hot = b.fire > 0;
+    const ghosted = b.ghost > 0;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (b.beach > 0) {
+      this.glow('#ff5b5b', 18);
+      const stripes = ['#ff5b5b', '#ffffff', '#ffd93b', '#ffffff', '#3da5ff'];
+      const sh = (r * 2) / stripes.length;
+      for (let i = 0; i < stripes.length; i++) {
+        ctx.fillStyle = stripes[i];
+        ctx.fillRect(sx - r, sy - r + i * sh, r * 2, Math.ceil(sh));
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillRect(sx - r * 0.55, sy - r * 0.8, r * 0.6, r * 0.3);
+    } else {
+      const caught = b.held >= 0;
+      const body = caught ? '#b8ffd9' : ghosted ? '#c9a2ff' : hot ? '#ffd166' : '#ffffff';
+      this.glow(caught ? '#3ddc84' : ghosted ? '#c9a2ff' : hot ? '#ff7a3d' : 'rgba(255,255,255,0.9)', hot ? 26 : 14);
+      ctx.fillStyle = body;
+      ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+      ctx.fillStyle = caught ? '#ffffff' : ghosted ? '#e9dcff' : hot ? '#fff3c4' : '#ffffff';
+      ctx.fillRect(sx - r * 0.45, sy - r * 0.9, r * 0.9, r * 0.5);
+      if (caught) {
+        // Crackle so a caught ball reads as "held", not "frozen".
+        ctx.fillStyle = '#3ddc84';
+        const k = Math.floor(time * 10) % 2;
+        ctx.fillRect(sx - r - 3, sy + (k ? -r : r) - 1, 2, 2);
+        ctx.fillRect(sx + r + 1, sy + (k ? r : -r) - 1, 2, 2);
+      }
+    }
+    ctx.restore();
   }
 
   drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0) {
@@ -611,6 +895,11 @@ export class Renderer {
         }
         ctx.globalAlpha = 1;
       }
+      if (p.arco > 0 && (p.arco > 1 || Math.floor(time * 8) % 2 === 0)) {
+        // A little arcade of stone arches along the court side: returns off
+        // this paddle bend. Blinks through its last second.
+        this.drawArcade(sx, courtY, w, h, outward);
+      }
 
       if (p.shield > 0) {
         const [, shy] = this.pt(0.5, SHIELD_Y[i], flip);
@@ -624,6 +913,27 @@ export class Renderer {
         ctx.fillRect(c.x, shy - 8, c.w, 16);
         ctx.fillStyle = ch.color2;
         for (let k = 0; k < 14; k++) ctx.fillRect(c.x + (k + 0.5) * (c.w / 14) - 2, shy - 2, 4, 4);
+      }
+    }
+  }
+
+  /** ARCO's badge: three stone arches standing on the paddle's court side. */
+  drawArcade(sx, courtY, w, h, outward) {
+    const ctx = this.ctx;
+    const u = Math.max(1, Math.round(h * 0.1));          // sized to the paddle, not the art pixel
+    // Rows from the paddle outward; the keystone takes the crate's colour.
+    const ARCH = ['.#K#.', '#...#', '#...#', '#...#'];
+    for (let a = -1; a <= 1; a++) {
+      const ox = Math.round(sx + a * w * 0.3 - 2.5 * u);
+      for (let r = 0; r < ARCH.length; r++) {
+        const row = ARCH[ARCH.length - 1 - r];            // legs on the paddle
+        const y = Math.round(courtY + outward * (r + 1) * u - (outward < 0 ? 0 : u));
+        for (let x = 0; x < 5; x++) {
+          const ch = row[x];
+          if (ch === '.') continue;
+          ctx.fillStyle = ch === 'K' ? ARCO_COLOR : '#efe2c4';
+          ctx.fillRect(ox + x * u, y, u, u);
+        }
       }
     }
   }
@@ -898,7 +1208,7 @@ export class Renderer {
   drawMenuBackdrop(stage, time, fx) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawBackdrop(stage, time, 0);
+    this.drawBackdrop(stage, time);
 
     if (!this.ghost) {
       this.ghost = { x: 0.3, y: 0.4, vx: 0.16, vy: 0.21, trail: [] };

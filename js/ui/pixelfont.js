@@ -29,6 +29,11 @@ const FONT = {
   '$': '041F101F011F04',
   // '@' is drawn as a little heart — for "MADE IN MILANO WITH @".
   '@': '0A1F1F1F0E0400',
+  // Crate glyphs for the stages' signature items. '~' is a canal ripple
+  // (REFLECTION) and '^' a marble pinnacle (SPIRE); ARCO's arch and
+  // AVALANCHE's wind-blown snowbank borrow the Unicode shapes nearest them.
+  '~': '00000D16000000', '^': '04040E0E0E1F1F',
+  '\u2229': '0E111111111100', '\u2313': '00000C1E1F1F00',
 };
 
 export const GLYPH_W = 5;

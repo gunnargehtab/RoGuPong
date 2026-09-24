@@ -107,13 +107,35 @@ items reward winning the exchange, not standing in the right place.
 
 | Item | Effect |
 | --- | --- |
-| MULTIBALL | Two extra balls join the rally (hard cap of five on the court) |
+| MULTIBALL | Two extra balls join the rally, fanned either side of its heading (hard cap of five on the court) |
 | BIG PADDLE | Your paddle swells 60% for seven seconds |
 | DEEP FREEZE | Their paddle moves at half speed for four seconds |
 | TURBO | The ball jumps to 1.45× speed with a flame trail |
 | GHOST BALL | The ball goes near-invisible for four seconds, flashing briefly mid-court |
 | SHRINK RAY | Their paddle drops to 55% width for five seconds |
 | BEACH BALL | The ball inflates to 2.3× size, slow and floaty, for six seconds |
+| REFLECTION | For five seconds a decoy ball mirrors the real one across the court's long axis |
+| SPIRE | A marble pinnacle rises mid-way into their half for six seconds; balls bounce off it |
+| ARCO | For six seconds your returns bend back toward the middle in an arch |
+| AVALANCHE | A snowdrift guards the half of your goal line your paddle isn't covering — 7 s or two saves |
+
+**Every stage deals its own four.** MULTIBALL drops everywhere (party mode is
+built on it); each stage adds two classics that suit the place and one
+signature crate found nowhere else, so the four courts play a little
+differently as well as looking different:
+
+| Stage | Crates |
+| --- | --- |
+| Navigli Night | MULTIBALL, GHOST BALL, TURBO, **REFLECTION** |
+| Duomo Rooftop | MULTIBALL, BIG PADDLE, SHRINK RAY, **SPIRE** |
+| Brera Arcade | MULTIBALL, BIG PADDLE, BEACH BALL, **ARCO** |
+| Alpi Sunset | MULTIBALL, DEEP FREEZE, TURBO, **AVALANCHE** |
+
+The pool rides nothing new on the wire: both phones look it up from the stage
+id in the `start` message, and the weighted roll walks the item list in its own
+order, so how a pool is written can never make the two ends disagree. The
+signature crates all weigh 3 — about one crate in four — against the classics'
+existing 2–4.
 
 The three chaos items keep a fairness valve each: the ghost ball is always
 visible in the last fifth of the court before either goal, so the save stays
@@ -124,6 +146,38 @@ serve pace while inflated (only AFTERBURN punches through), because a huge
 against the others' 3–4 — they are punchlines, and punchlines wear out if they
 land every rally.
 
+The signature crates carry valves of their own:
+
+- **REFLECTION** is drawn, never simulated: the decoy can't collide, score or
+  break crates. It is a shade dimmer than the real ball with a ripple running
+  through it, so a sharp eye can tell them apart, and it fades out between 0.3
+  and 0.2 of the court from either goal — every save is made against the real
+  ball. It blinks along with a ghost ball, so the pair can't be read by which
+  one flickers, and it vanishes while the ball sits on a magnet.
+- **SPIRE** stands only on the rival's half, 0.2 short of their paddle, and it
+  never rises in the path of the shot that raised it — it keeps clear of where
+  that ball will cross its line, further for a slanting ball — so the picker's
+  own attack isn't batted straight back at them. Its radius (0.06 court widths) leaves at least 0.146 to
+  each wall, so a ball always fits past. Collision is tested along the ball's
+  whole path in true court proportions, so nothing tunnels through, and a
+  spire rising onto a ball pushes it clear. A bounce keeps the ball's speed and
+  its last toucher, and always leaves at least 35% of the speed vertical — a
+  glancing hit can't go flat and rattle between spire and wall. One per player;
+  a second pick moves it.
+- **ARCO** bends only the picker's own returns, and the bend ends on the next
+  touch of anything — paddle, wall, spire, the rival's AEGIS — so it never leaks
+  into the reply. The spin scales with the shot's width and with pace
+  (`2.2 · |sin angle| · (speed/0.62)^1.75`, none under 0.15 rad), which gives
+  the same arch at every speed: a 60° return peaks around x 0.7 and arrives
+  about 15° back the other way, never wider than it left and never looping. A
+  mid-flight TURBO or BEACH BALL rescales the bend to the new pace, NEO's CURVE
+  outranks it on the same hit, and MAG's fling is never bent, so aiming by
+  dragging stays exact. Three stone arches on the paddle warn the rival.
+- **AVALANCHE** covers only the half of your goal your paddle isn't already
+  covering (36% of the line), sits behind the shield line so paddle and AEGIS
+  play first, and takes 12% off a ball it saves — a save, not a counter-attack.
+  The first block visibly bites a chunk out of it; the second clears it.
+
 With multiball live, a ball leaving the court still scores and is removed while
 the others keep playing, so a multiball can swing two or three points in one
 frantic exchange.
@@ -132,7 +186,8 @@ frantic exchange.
 the chaos dial without touching the tuned classic game: crates arrive every
 2.4–4 s instead of 6–9.5, three may share the court instead of two, the rally
 only needs one return before crates start, and multiball rolls at triple
-weight — a full court is the whole point. Everything else — physics, speeds,
+weight within the stage's pool — about half of all crates — because a full
+court is the whole point. Everything else — physics, speeds,
 paddles, specials — is untouched, so party mode is the same game played in a
 hailstorm. It rides the `setup` and `start` messages like every other match
 parameter, and the leaderboard deliberately does not distinguish the two modes:
@@ -190,7 +245,19 @@ stalling radio only ever adds latency.
 Between snapshots the guest extrapolates ball positions along their last known
 velocity, which on a LAN's few milliseconds of latency is visually exact. In
 testing, host and guest ball positions stayed within about 0.01 of the court of
-each other.
+each other. The stage objects the signature crates raise — spires and
+snowdrifts — travel in each snapshot as a short list (kind, position, size,
+time left, owner, blocks), and the guest bounces its extrapolated balls off
+them with the same geometry the host uses (no scoring, no events), so a ball
+never sails through a spire for a frame while the correction is in flight.
+REFLECTION and ARCO ride as seconds-left values on the ball and paddle entries,
+so the decoy's fade and the badge's last-second blink match on both phones.
+Every new field is appended to the end of its array, so a phone still on an
+older build never trips over it — and a guest ignores prop kinds it doesn't
+know. Mixed builds do show, though: an older guest draws a new crate as
+MULTIBALL and doesn't draw spires or snowdrifts at all, so it sees balls bounce
+off thin air. The score is still right (the host decides everything); reloading
+the older phone once with internet fixes the picture.
 
 Anything that must not be lost — character picks, the match start, the final
 result, emotes, the special-move button press — goes on a second, **reliable
@@ -284,14 +351,30 @@ no internet.
   8×8 lowercase — rendered with a hard outline, a drop shadow, a vertical
   colour ramp per letter (Ro warm, Gu cool, Pong gold), a gentle arc across the
   word and a specular highlight that sweeps across it every few seconds.
-- **All in-game text** uses a 58-glyph 5×7 bitmap font defined in this repo, so
+- **All in-game text** uses a 62-glyph 5×7 bitmap font defined in this repo, so
   the game looks identical on every handset. Outlines are drawn thinner than
   one font pixel, because a full-pixel outline swallows the counters of glyphs
   like 0 and 8 and turns a score into an unreadable brick.
-- **The stages** are procedural: a sky gradient, two parallax skylines built
-  from a seeded generator, and per-stage extras — canal shimmer at Navigli,
-  cathedral spires at the Duomo, an arcade checkerboard at Brera, mountains
-  over the Alps.
+- **The stages** are real places, painted in code. Each is a scene module that
+  paints two pictures: the backdrop, the place seen side-on, and the court
+  floor, the same place seen from above — the Navigli canal at blue hour with
+  lamplight streaking the water and terraces along both banks; the Duomo roof
+  among its marble spires in the golden hour, the Madonnina catching the light
+  and the skyline framed between the pinnacles; the arcaded courtyard of the
+  Palazzo di Brera in soft daylight; the Brenta Dolomites burning at sunset
+  over a snowfield. They are painted in *art pixels* — a canvas about
+  min(W, H)/180 times smaller than the screen and at most half its size (on a
+  phone, exactly half), scaled up without smoothing — with flat
+  colours, banding and dithering instead of gradients, so every stage has the
+  same 16-bit grain on every handset. During a match the court covers most of
+  a portrait screen, which is why the floor carries the theme: canal water,
+  marble slabs, courtyard paving, wind-rippled snow. Floors are kept dark and
+  low-contrast so the ball and paddles always pop, and mirrored top to bottom
+  so both phones see the same court from their own end. On full graphics each
+  scene adds a small animation layer — lamp flicker, water shimmer, drifting
+  snow — over the still painting. During a match the strips of backdrop behind
+  the HUD are darkened in a few flat bands, so the scores read over the daylit
+  stages too.
 - **The feedback layer** is where the 16-bit feel actually lives: hit sparks
   fired along the return angle, expanding rings, screen shake scaled to the
   weight of the event, freeze-frames on a big hit, ball trails that turn to
@@ -359,10 +442,12 @@ because the threat model is two kids on a sofa.
 **The cheap render path.** A budget phone's GPU is fill-rate-bound, and the
 game's look is mostly full-screen fills, so `low` quality attacks exactly that:
 the canvas renders at 1× instead of device pixels (on a 720p phone that halves
-the pixels filled), the whole backdrop — sky, skylines, water — is painted once
-per stage into an offscreen canvas and blitted as a single composite instead of
-~a hundred fills a frame, canvas shadows (the single most expensive 2D feature
-on a weak GPU) are off, and the CRT scanline/vignette passes are skipped. The
+the pixels filled), the scenes' per-frame animation layers are skipped, canvas
+shadows (the single most expensive 2D feature on a weak GPU) are off, and the
+CRT scanline/vignette passes are skipped. The stage art itself costs the same
+in both levels, and very little: backdrop and court floor are painted into
+small art-pixel canvases only when the stage or the screen size changes, and
+blitted as two composites a frame, however much detail the painting holds. The
 gameplay stays pixel-identical; only the dressing thins. Gradients everywhere
 are cached rather than rebuilt per frame, in both quality levels.
 
