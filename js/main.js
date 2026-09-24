@@ -13,6 +13,7 @@ import { audio } from './game/audio.js';
 import { Match } from './game/match.js';
 import { byId as charById } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
+import { itemById } from './game/items.js';
 import { Peer } from './net/peer.js';
 import { extractCode, inviteLink, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
@@ -26,6 +27,11 @@ const INPUT_HZ = 30;
 const FIXED_STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 6;
 const HISTORY_SHARED = 80;      // how many past matches to hand the other phone
+// What this build speaks, sent in 'hello'. Bump it whenever a change needs both
+// phones on the same build to look right — snapshot fields a guest has to draw,
+// crates it has to know — and tag new crates with it (items.js `since`). Builds
+// from before the number existed send none, which reads as 1.
+const PROTOCOL = 2;
 // How far back predictPaddle remembers where our own paddle has been. Sized to
 // cover the whole staleness of the echoed paddle position with room to spare:
 // input send interval + RTT + host frame (and its up-to-6-step backlog) +
@@ -53,6 +59,7 @@ class App {
     this.theirChar = 'gu';
     this.theirFlair = 'none';
     this.theirName = '';
+    this.theirProtocol = null;    // from their 'hello'; null until it arrives
     this.theirReady = false;
     this.myReady = false;
     this.myRematch = false;
@@ -349,9 +356,10 @@ class App {
     this.target = target;
     this.party = !!party;
     this.matchId = mid;
-    // The stage deals its own crates. Both phones look the pool up from the
-    // stage id in the start message, so it never has to travel.
-    this.match = new Match({ chars, stage, target, seed, party, items: this.stage.items });
+    // The stage deals its own crates: its pool, minus anything newer than the
+    // older phone's build. Only the host's copy is ever rolled, so the pool
+    // never has to travel.
+    this.match = new Match({ chars, stage, target, seed, party, items: this.stageCrates(this.stage) });
     this.finishing = false;
     this.pendingResult = null;
     this.simAccum = 0;
@@ -457,8 +465,10 @@ class App {
       this.stopScanner();
       audio.blip(880, 0.1);
       this.screens.toast('Connected', 'good');
+      this.theirProtocol = null;
       peer.send({
         t: 'hello',
+        v: PROTOCOL,
         name: this.profile.name || (peer.isHost ? 'HOST' : 'GUEST'),
         char: this.myChar,
         flair: this.profile.flair,
@@ -478,6 +488,35 @@ class App {
     this.go('lobby', this.lobbyData());
   }
 
+  /**
+   * The newest protocol both phones speak. A phone still running an older
+   * cached build (loaded on a WiFi with no internet) can't draw what newer
+   * crates put on the court, so the match sticks to what both can show.
+   */
+  sharedProtocol() {
+    // No phone on the other end (a console match, or the one after a drop):
+    // whatever the last friend was running no longer matters.
+    if (!this.peer || this.theirProtocol == null) return PROTOCOL;
+    return Math.min(PROTOCOL, this.theirProtocol);
+  }
+
+  /** The stage's crate pool, minus anything the other phone's build predates. */
+  stageCrates(stage) {
+    const shared = this.sharedProtocol();
+    return stage.items.filter((id) => (itemById(id).since || 1) <= shared);
+  }
+
+  /**
+   * The crates this match will actually deal, as far as this phone can tell —
+   * only the host rolls them. A host that sent no protocol predates this
+   * filtering and deals whatever its own build does, so a guest can't know
+   * (null).
+   */
+  knownCrates() {
+    if (this.peer && !this.peer.isHost && this.theirProtocol === 1) return null;
+    return this.stageCrates(this.stage);
+  }
+
   setupMsg() {
     return { t: 'setup', stage: this.stage.id, target: this.target, party: this.party };
   }
@@ -493,9 +532,12 @@ class App {
       myFlair: this.profile.flair,
       flairProgress: lb.flairProgress(this.profile),
       stage: this.stage.id,
+      crates: this.knownCrates(),
       target: this.target,
       party: this.party,
       rtt: this.peer?.rtt || 0,
+      protocol: PROTOCOL,
+      theirProtocol: this.theirProtocol,
     };
   }
 
@@ -509,8 +551,17 @@ class App {
         this.theirName = String(msg.name || '').slice(0, 10).toUpperCase();
         this.theirChar = charById(msg.char).id;
         this.theirFlair = lb.flairById(msg.flair).id;
+        this.theirProtocol = Number.isInteger(msg.v) && msg.v > 0 ? msg.v : 1;
         const added = lb.mergeMatches(msg.matches);
         if (added) this.screens.toast(`Merged ${added} match${added === 1 ? '' : 'es'}`, 'good');
+        // A build from before the protocol can't notice a mismatch at all, so
+        // whichever phone can names the one that needs updating — itself
+        // included.
+        if (this.theirProtocol < PROTOCOL) {
+          this.screens.toast(`${this.theirName || 'Your friend'}'s game is out of date`, 'warn');
+        } else if (this.theirProtocol > PROTOCOL) {
+          this.screens.toast('This phone\'s game is out of date', 'warn');
+        }
         this.refreshLobby();
         break;
       }

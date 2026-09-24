@@ -283,6 +283,8 @@ tr.me td { color: var(--cyan); }
 }
 .toast.bad { border-color: var(--red); color: #ffd9d5; }
 .toast.good { border-color: var(--green); }
+.toast.warn { border-color: var(--gold); }
+.panel.notice { border-color: var(--gold); }
 
 .emotes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .emotes button {

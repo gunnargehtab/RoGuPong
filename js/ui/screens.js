@@ -119,7 +119,7 @@ export class Screens {
       el.style.transition = 'opacity .3s';
       el.style.opacity = '0';
       setTimeout(() => el.remove(), 320);
-    }, kind === 'bad' ? 4200 : 2400);
+    }, kind === 'bad' || kind === 'warn' ? 4200 : 2400);
   }
 
   tickLogo(time) {
@@ -583,7 +583,10 @@ export class Screens {
   /* Lobby                                                             */
 
   screenLobby(data) {
-    const { isHost, myChar, theirChar, theirName, theirReady, myReady, myFlair, flairProgress, stage, target, party, rtt } = data;
+    const {
+      isHost, myChar, theirChar, theirName, theirReady, myReady, myFlair, flairProgress,
+      stage, crates, target, party, rtt, protocol, theirProtocol,
+    } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('CHOOSE YOUR FIGHTER', { scale: 2 }));
@@ -597,6 +600,31 @@ export class Screens {
         <span>${esc(theirName || 'FRIEND')}<span class="dot ${theirReady ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
       </div>`;
     wrap.appendChild(versus);
+
+    // A phone on an older cached build — loaded on a WiFi with no internet —
+    // still plays, but can't show everything a newer one can. Say which phone
+    // needs the update and what reloading it takes; the match itself carries on
+    // with the crates both can draw.
+    if (theirProtocol != null && theirProtocol !== protocol) {
+      const theirsOlder = theirProtocol < protocol;
+      const who = esc(theirName || 'your friend');
+      const notice = document.createElement('div');
+      notice.className = 'panel tight notice';
+      // An older host picks the crates itself, so only a host can promise
+      // which ones stay off.
+      const crateNote = isHost
+        ? 'the newest crates stay off — their phone might not be able to show them'
+        : 'their older game picks the crates';
+      notice.innerHTML = theirsOlder
+        ? `<h3 class="warn">${who}&rsquo;s game is out of date</h3>
+          <p style="margin-top:4px">You can still play, but ${crateNote}. Once their
+          phone has internet, they can reload RoGuPong to update it, then you reconnect.</p>`
+        : `<h3 class="warn">This phone&rsquo;s game is out of date</h3>
+          <p style="margin-top:4px">${who} has a newer version. You can still play, but
+          the newest crates stay off. Once this phone has internet, reload RoGuPong to
+          update it, then reconnect.</p>`;
+      wrap.appendChild(notice);
+    }
 
     const grid = document.createElement('div');
     grid.className = 'grid2';
@@ -675,8 +703,12 @@ export class Screens {
       </div>
       <div style="margin:8px 0"><b style="color:${st.accent}">${esc(st.name)}</b>
         <br><small>${esc(st.blurb)}</small></div>
-      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:0 0 10px;font-size:0.72rem;letter-spacing:0.06em">
-        ${st.items.map((id) => `<span style="white-space:nowrap">${crateName(itemById(id))}</span>`).join('')}</div>
+      ${crates ? `<div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:0 0 10px;font-size:0.72rem;letter-spacing:0.06em">
+        ${crates.map((id) => `<span style="white-space:nowrap">${crateName(itemById(id))}</span>`).join('')}</div>
+      ${crates.length < st.items.length ? `<small class="muted" style="display:block;margin:-4px 0 10px">
+        ${esc(st.items.filter((id) => !crates.includes(id)).map((id) => itemById(id).name).join(', '))}
+        off until both phones run the same version</small>` : ''}`
+    : `<small class="muted" style="display:block;margin:0 0 10px">Crates: the host&rsquo;s older game picks them</small>`}
       ${isHost ? `<div class="row">
         <button class="btn small secondary" data-action="cycle-stage">Next stage</button>
         <button class="btn small secondary" data-action="cycle-target">First to ${target}</button>
