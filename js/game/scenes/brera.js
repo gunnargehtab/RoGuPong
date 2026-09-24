@@ -162,6 +162,9 @@ function layout(w, h) {
   const f = s * D;
   const baseY = h * lerp(0.645, 0.735, tA);
   L = { w, h, s, f, cx: w / 2, vy: baseY - EYE * s, baseY, roofY: baseY - ROOF * s, bw: HW * s };
+  // One entry per canvas size; a handful covers rotation and fullscreen,
+  // and a desktop drag-resize must not grow this without bound.
+  if (layouts.size >= 8) layouts.delete(layouts.keys().next().value);
   layouts.set(key, L);
   return (lastLayout = L);
 }
@@ -825,6 +828,7 @@ function animState(w, h) {
     peck.push({ x: (i - 1) * 2.4 + (rand() - 0.5), z: ZS - 5.2 + rand() * 1.4, ph: rand() * 10, rate: 0.5 + rand() * 0.4 });
   }
   A = { w, h, lumps, flock, peck };
+  if (anims.size >= 8) anims.delete(anims.keys().next().value);
   anims.set(key, A);
   return (lastAnim = A);
 }

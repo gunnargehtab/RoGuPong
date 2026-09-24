@@ -6,7 +6,7 @@
 // so you are always the paddle at the bottom.
 
 import { drawText, measure } from '../ui/pixelfont.js';
-import { PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, ballRadius } from './match.js';
+import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, ballRadius } from './match.js';
 import { itemById } from './items.js';
 
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
@@ -187,17 +187,23 @@ function paintSpireShaft(rA, hw) {
 }
 
 /** A wind-packed snowbank, crest up; `hits` bites chunks out of it. */
-function paintDrift(wA, hA, hits) {
+function paintDrift(wA, hA, hits, floor) {
   const h = hA + 2;                                     // headroom for the ink line
   return pixelSprite(wA, h, (set) => {
     for (let x = 0; x < wA; x++) {
       const u = ((x + 0.5) / wA) * 2 - 1;
-      const body = Math.pow(Math.max(0, 1 - u * u), 0.55);
+      // Steep-ended, so the bank stops in a short wall rather than a long
+      // slope a ball could visibly bounce off thin air above.
+      const body = Math.pow(Math.max(0, 1 - u * u * u * u), 0.3);
       const lumps = 1 + 0.10 * Math.sin(u * 9 + 1.3) + 0.06 * Math.sin(u * 23 + 0.4);
-      let top = hA * body * lumps * (1 - 0.34 * hits);
+      // The mound sits on a floor as high as the bounce line, so a block
+      // shrinks and bites the mound but never the part a ball bounces off.
+      const mound = hA - floor;
+      let top = floor + mound * body * lumps * (1 - 0.34 * hits);
       // A block leaves a bite where the snow gave.
-      if (hits) top -= hA * 0.25 * Math.max(0, 1 - Math.abs(u + 0.18) * 4);
-      const colH = Math.max(0, Math.min(hA, Math.round(top)));
+      if (hits) top -= mound * 0.6 * Math.max(0, 1 - Math.abs(u + 0.18) * 4);
+      // Never below the line the ball actually bounces off, bitten or not.
+      const colH = Math.max(floor, Math.min(hA, Math.round(top)));
       for (let r = 0; r < colH; r++) {
         const depth = colH - 1 - r;                    // 0 at the crest
         const y = h - 1 - r;
@@ -283,7 +289,9 @@ export class Renderer {
     this.scanlines = null;
     this.vignette = null;
     this.gradCache.clear();
-    this.sceneCache = {};
+    // The scene cache survives: stage art depends only on the CSS size (its
+    // keys carry it), not on DPR or quality, so a Graphics switch — or the
+    // automatic one, mid-match on a phone already struggling — costs no repaint.
     this.ap = this.artPixel();
     this.layout();
   }
@@ -391,10 +399,12 @@ export class Renderer {
     const M = SHAKE_MARGIN;
     const ap = this.ap;
     const scene = stage.scene;
-    const key = `${stage.id}:${this.W}x${this.H}`;
+    const key = `${stage.id}:${this.W}x${this.H}@${ap}`;
+    const live = this.quality !== 'low' && scene.animateBackdrop;
     let art = this.sceneLayer('backdrop', key,
       this.W + M * 2, this.H + M * 2, (octx, w, h) => scene.backdrop(octx, w, h));
-    if (hud) {
+    if (hud && !live) {
+      // A still backdrop gets its HUD scrim baked in: free every frame.
       const base = art;
       art = this.sceneLayer('backdropHud', key, this.W + M * 2, this.H + M * 2, (octx, w, h) => {
         octx.drawImage(base, 0, 0);
@@ -404,11 +414,14 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(art, -M, -M, art.width * ap, art.height * ap);
-    if (this.quality === 'low' || !scene.animateBackdrop) return;
+    if (!live) return;
     ctx.save();
     ctx.translate(-M, -M);
     ctx.scale(ap, ap);
     scene.animateBackdrop(ctx, art.width, art.height, time);
+    // An animated one gets it on top of the animation, or a lamp flickering
+    // in a strip would flash at full brightness against the dimmed rest.
+    if (hud) this.paintHudScrim(ctx, art.width, art.height);
     ctx.restore();
   }
 
@@ -416,8 +429,9 @@ export class Renderer {
    * During a match the scores and names sit on the strips of backdrop above
    * and below the court, and a daylit stage (Brera's paving, the Duomo's
    * marble) would swallow the dimmer HUD text. Darken those strips in a few
-   * flat bands, deepest at the screen edge — baked into a copy of the
-   * backdrop, so it costs nothing per frame and the menus keep the full view.
+   * flat bands, deepest at the screen edge. Drawn in art pixels, into a baked
+   * copy of the backdrop on fast graphics or over the animation layer on full;
+   * the menus keep the full view either way.
    */
   paintHudScrim(ctx, w, h) {
     const M = SHAKE_MARGIN;
@@ -443,7 +457,9 @@ export class Renderer {
     const c = this.court;
     const ap = this.ap;
     const scene = stage.scene;
-    const art = this.sceneLayer('court', `${stage.id}:${c.w}x${c.h}`,
+    // Keyed on the art pixel too: two screens can share a court size but not
+    // an art pixel, and the cache now outlives a resize.
+    const art = this.sceneLayer('court', `${stage.id}:${c.w}x${c.h}@${ap}`,
       c.w, c.h, (octx, w, h) => scene.court(octx, w, h));
     // The art canvas rounds up to whole art pixels; centre the overhang so a
     // floor painted symmetric stays symmetric on screen.
@@ -601,15 +617,20 @@ export class Renderer {
     const ctx = this.ctx;
     const c = this.court;
     const ap = this.ap;
-    const wA = Math.max(6, Math.round((q.size * 2 * c.w) / ap));
-    // Tall enough that its crest meets a ball bouncing off the line.
-    const hA = Math.max(4, Math.round((Math.abs((q.p === 0 ? 1 : 0) - q.y) + 0.012) * c.h / ap));
+    // As wide as the hitbox (the half span plus half a ball either side), and
+    // never lower than the line a ball bounces off, so the snow is always
+    // where the bounce is.
+    const reach = q.size + BALL_R * 0.5;
+    const wA = Math.max(6, Math.round((reach * 2 * c.w) / ap));
+    const line = Math.abs((q.p === 0 ? 1 : 0) - q.y) * c.h / ap;
+    const floor = Math.round(line) + 1;
+    const hA = floor + Math.max(3, Math.round(0.018 * c.h / ap));
     const hits = Math.min(1, q.hits || 0);
-    const art = this.propSprite(`drift:${wA}:${hA}:${hits}`, () => paintDrift(wA, hA, hits));
+    const art = this.propSprite(`drift:${wA}:${hA}:${hits}:${floor}`, () => paintDrift(wA, hA, hits, floor));
     const k = this.propStanding(q);
     const show = Math.round(art.height * k);
     if (show <= 0) return;
-    const [x0, edge] = this.pt(q.x - q.size, q.p === 0 ? 1 : 0, flip);
+    const [x0, edge] = this.pt(q.x - reach, q.p === 0 ? 1 : 0, flip);
     const left = Math.round(x0);
     const up = Math.round(edge) >= c.y + c.h / 2;         // this goal is at the bottom of the screen
     ctx.save();

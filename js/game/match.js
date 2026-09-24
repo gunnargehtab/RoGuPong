@@ -68,6 +68,19 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 /** A beach ball is a much bigger target; everything that collides asks here. */
 export const ballRadius = (b) => BALL_R * (b.beach > 0 ? 2.3 : 1);
 
+/**
+ * Where a ball will cross the line at height y, bouncing off the side walls on
+ * the way — or null if it isn't heading there. Straight-line only: spin is
+ * ignored, which is close enough for keeping things out of its way.
+ */
+function crossingX(b, y) {
+  if (b.held >= 0 || !b.vy || (y - b.y) / b.vy <= 0) return null;
+  const rad = ballRadius(b);
+  const span = 1 - rad * 2;
+  const u = ((b.x + b.vx * ((y - b.y) / b.vy) - rad) % (span * 2) + span * 2) % (span * 2);
+  return rad + (u <= span ? u : span * 2 - u);
+}
+
 let ballSeq = 0;
 
 function makeBall(x, y, angle, speed, owner) {
@@ -619,7 +632,19 @@ export class Match {
         // One per owner: a second pick moves it.
         const old = this.props.find((q) => q.kind === 'spire' && q.p === owner);
         if (old) this.dropProp(old);
-        const x = 0.25 + this.rand() * 0.5;
+        // Never in the path of the shot that raised it: that ball is still
+        // heading for the victim's half, and a spire rising under it would
+        // bat the picker's own attack straight back before it had even
+        // finished rising. Keep it clear of where the ball will cross its
+        // line (walls folded in, spin ignored) — wider for a slanting ball,
+        // whose path passes the spire closer than that crossing point does.
+        let x = 0.25 + this.rand() * 0.5;
+        const cross = crossingX(ball, SPIRE_Y[foe]);
+        const upright = Math.abs(ball.vy / COURT_ASPECT) / Math.hypot(ball.vx, ball.vy / COURT_ASPECT) || 1;
+        const clear = Math.min(0.24, (SPIRE_R + ballRadius(ball)) / upright + 0.02);
+        if (cross != null && Math.abs(x - cross) < clear) {
+          x = clamp(cross > 0.5 ? cross - clear : cross + clear, 0.25, 0.75);
+        }
         this.props.push({ kind: 'spire', x, y: SPIRE_Y[foe], size: SPIRE_R, t: item.duration, age: 0, p: owner, hits: 0 });
         this.event({ t: 'prop', k: 'spire', x, y: SPIRE_Y[foe], p: owner });
         break;

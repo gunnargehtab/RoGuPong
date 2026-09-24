@@ -122,7 +122,10 @@ function cover(s, d, bay, half) {
   return (F(s + d / 2) - F(s - d / 2)) / d;
 }
 
-/** kit.bands, but it also records each row's colour so the water can mirror it. */
+/**
+ * A vertical banded gradient — flat bands, a checker seam at each boundary —
+ * that also records each row's colour so the water can mirror it.
+ */
 function vbands(ctx, x, y, w, h, stops, steps, rows) {
   const total = (stops.length - 1) * steps;
   let prev = null;
@@ -515,6 +518,9 @@ function layout(w, h) {
   }
 
   L = { G, rip, streaks, lamps, signs, strings, bulbs, stars, moon };
+  // One entry per canvas size; a handful covers rotation and fullscreen,
+  // and a desktop drag-resize must not grow this without bound.
+  if (LAYOUTS.size >= 8) LAYOUTS.delete(LAYOUTS.keys().next().value);
   LAYOUTS.set(key, L);
   return L;
 }
@@ -1107,6 +1113,7 @@ function courtLayout(w, h) {
     streaks.push(s);
   }
   C = { eb, pave, half, streaks, lamps, terraces };
+  if (COURT.size >= 8) COURT.delete(COURT.keys().next().value);
   COURT.set(key, C);
   return C;
 }

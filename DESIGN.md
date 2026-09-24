@@ -155,7 +155,9 @@ The signature crates carry valves of their own:
   ball. It blinks along with a ghost ball, so the pair can't be read by which
   one flickers, and it vanishes while the ball sits on a magnet.
 - **SPIRE** stands only on the rival's half, 0.2 short of their paddle, and it
-  visibly rises first. Its radius (0.06 court widths) leaves at least 0.146 to
+  never rises in the path of the shot that raised it — it keeps clear of where
+  that ball will cross its line, further for a slanting ball — so the picker's
+  own attack isn't batted straight back at them. Its radius (0.06 court widths) leaves at least 0.146 to
   each wall, so a ball always fits past. Collision is tested along the ball's
   whole path in true court proportions, so nothing tunnels through, and a
   spire rising onto a ball pushes it clear. A bounce keeps the ball's speed and
@@ -250,9 +252,12 @@ them with the same geometry the host uses (no scoring, no events), so a ball
 never sails through a spire for a frame while the correction is in flight.
 REFLECTION and ARCO ride as seconds-left values on the ball and paddle entries,
 so the decoy's fade and the badge's last-second blink match on both phones.
-Every new field is appended to the end of its array: a phone still on an older
-build ignores it (and draws a new crate as MULTIBALL, harmlessly, since the host
-decides everything), and a guest ignores prop kinds it doesn't know.
+Every new field is appended to the end of its array, so a phone still on an
+older build never trips over it — and a guest ignores prop kinds it doesn't
+know. Mixed builds do show, though: an older guest draws a new crate as
+MULTIBALL and doesn't draw spires or snowdrifts at all, so it sees balls bounce
+off thin air. The score is still right (the host decides everything); reloading
+the older phone once with internet fixes the picture.
 
 Anything that must not be lost — character picks, the match start, the final
 result, emotes, the special-move button press — goes on a second, **reliable
@@ -357,8 +362,9 @@ no internet.
   among its marble spires in the golden hour, the Madonnina catching the light
   and the skyline framed between the pinnacles; the arcaded courtyard of the
   Palazzo di Brera in soft daylight; the Brenta Dolomites burning at sunset
-  over a snowfield. They are painted in *art pixels* — a canvas two to five
-  times smaller than the screen, scaled up without smoothing — with flat
+  over a snowfield. They are painted in *art pixels* — a canvas about
+  min(W, H)/180 times smaller than the screen and at most half its size (on a
+  phone, exactly half), scaled up without smoothing — with flat
   colours, banding and dithering instead of gradients, so every stage has the
   same 16-bit grain on every handset. During a match the court covers most of
   a portrait screen, which is why the floor carries the theme: canal water,
@@ -366,7 +372,9 @@ no internet.
   low-contrast so the ball and paddles always pop, and mirrored top to bottom
   so both phones see the same court from their own end. On full graphics each
   scene adds a small animation layer — lamp flicker, water shimmer, drifting
-  snow — over the still painting.
+  snow — over the still painting. During a match the strips of backdrop behind
+  the HUD are darkened in a few flat bands, so the scores read over the daylit
+  stages too.
 - **The feedback layer** is where the 16-bit feel actually lives: hit sparks
   fired along the return angle, expanding rings, screen shake scaled to the
   weight of the event, freeze-frames on a big hit, ball trails that turn to
@@ -437,9 +445,9 @@ the canvas renders at 1× instead of device pixels (on a 720p phone that halves
 the pixels filled), the scenes' per-frame animation layers are skipped, canvas
 shadows (the single most expensive 2D feature on a weak GPU) are off, and the
 CRT scanline/vignette passes are skipped. The stage art itself costs the same
-in both levels, and very little: backdrop and court floor are each painted once
-per stage and screen size into small art-pixel canvases and blitted as two
-composites a frame, however much detail the painting holds. The
+in both levels, and very little: backdrop and court floor are painted into
+small art-pixel canvases only when the stage or the screen size changes, and
+blitted as two composites a frame, however much detail the painting holds. The
 gameplay stays pixel-identical; only the dressing thins. Gradients everywhere
 are cached rather than rebuilt per frame, in both quality levels.
 
