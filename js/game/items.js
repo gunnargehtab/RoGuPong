@@ -72,7 +72,9 @@ export const ITEMS = [
     weight: 2,
   },
 
-  // The signature crates, one per stage.
+  // The signature crates, one per stage. `since` is the first protocol version
+  // (see PROTOCOL in main.js) whose phones announce they can draw the crate;
+  // a match against a phone announcing less leaves it out of the pool.
   {
     id: 'mirror',                 // Navigli
     name: 'REFLECTION',
@@ -81,6 +83,7 @@ export const ITEMS = [
     color: '#4fb8ff',
     duration: 5,
     weight: 3,
+    since: 2,
   },
   {
     id: 'spire',                  // Duomo
@@ -90,6 +93,7 @@ export const ITEMS = [
     color: '#f2e2cc',
     duration: 6,
     weight: 3,
+    since: 2,
   },
   {
     id: 'arco',                   // Brera
@@ -99,6 +103,7 @@ export const ITEMS = [
     color: '#9d8cff',
     duration: 6,
     weight: 3,
+    since: 2,
   },
   {
     id: 'avalanche',              // Alpi
@@ -108,6 +113,7 @@ export const ITEMS = [
     color: '#ff9ec4',
     duration: 7,
     weight: 3,
+    since: 2,
   },
 ];
 

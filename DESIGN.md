@@ -131,9 +131,10 @@ differently as well as looking different:
 | Brera Arcade | MULTIBALL, BIG PADDLE, BEACH BALL, **ARCO** |
 | Alpi Sunset | MULTIBALL, DEEP FREEZE, TURBO, **AVALANCHE** |
 
-The pool rides nothing new on the wire: both phones look it up from the stage
-id in the `start` message, and the weighted roll walks the item list in its own
-order, so how a pool is written can never make the two ends disagree. The
+The pool rides nothing new on the wire: only the host rolls crates, and it
+takes the pool from the stage — minus any crate newer than the other phone's
+build (see *Mixed builds* in §5) — while the weighted roll walks the item list
+in its own order, so how a pool is written never changes what gets dealt. The
 signature crates all weigh 3 — about one crate in four — against the classics'
 existing 2–4.
 
@@ -254,10 +255,27 @@ REFLECTION and ARCO ride as seconds-left values on the ball and paddle entries,
 so the decoy's fade and the badge's last-second blink match on both phones.
 Every new field is appended to the end of its array, so a phone still on an
 older build never trips over it — and a guest ignores prop kinds it doesn't
-know. Mixed builds do show, though: an older guest draws a new crate as
-MULTIBALL and doesn't draw spires or snowdrifts at all, so it sees balls bounce
-off thin air. The score is still right (the host decides everything); reloading
-the older phone once with internet fixes the picture.
+know.
+
+**Mixed builds.** The service worker makes the game playable offline, which
+also means a phone that last loaded it before an update keeps running the old
+build on a WiFi with no internet — and an old guest can't draw what newer crates
+put on the court (it would see balls bounce off spires it doesn't know exist).
+So each phone sends a protocol number in its `hello` (builds from before the
+number existed send none, which reads as 1). A build without the number can't
+notice a mismatch at all; any build with it names whichever phone is out of
+date — the other one or itself — in a toast and a notice in the lobby saying
+reloading that phone with internet updates it. Meanwhile the match sticks to
+what both can show: every crate carries the first protocol whose phones can
+draw it, and a host leaves out anything newer than the other phone's from the
+stage's pool (its lobby lists what's off). An older host simply deals what its
+own build knows — all of which a newer guest can draw — so a guest facing one
+says the host picks the crates rather than guessing. The rules never diverge
+either way — the host decides everything — so this is about both players
+seeing the same court, not about keeping score. (The first build with stage
+crates predates the number, so it too reads as 1: the signature crates stay off
+against it until it's reloaded — conservative, but never a court one phone
+can't draw.)
 
 Anything that must not be lost — character picks, the match start, the final
 result, emotes, the special-move button press — goes on a second, **reliable

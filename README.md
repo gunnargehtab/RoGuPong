@@ -46,7 +46,10 @@ branch), so every push to `main` republishes it. Any other static host works
 too; the game is just files.
 
 Load it once with internet and a service worker caches the whole game, so from
-then on it plays on a WiFi with no internet at all.
+then on it plays on a WiFi with no internet at all. If one phone last loaded it
+before an update, the lobby says which phone's game is out of date — reloading
+that phone once it has internet updates it. The two can still play meanwhile;
+crates the older game can't show are simply left out.
 
 ### Or run it locally
 
