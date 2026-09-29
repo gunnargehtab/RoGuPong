@@ -18,9 +18,14 @@ import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
 import { isIOS } from '../diag.js';
 
-// Two grid rows of four. Indices ride the wire ({t:'emote', i}), so only ever
-// append — reordering would make old phones pop the wrong glyph.
-export const EMOTES = ['🔥', '😎', '😱', '🍕', '🤣', '👻', '🚀', '💩'];
+// Indices ride the wire ({t:'emote', i}), so only ever append — reordering
+// would make old phones pop the wrong one. Eight emoji in two grid rows, then
+// the quick-chat lines, which a build from before them pops as a 👋.
+export const EMOTES = [
+  '🔥', '😎', '😱', '🍕', '🤣', '👻', '🚀', '💩',
+  'GG', 'Nice shot!', 'So close!', 'Rematch?', 'Ready?', 'One sec!', 'Sorry!', 'Hurry up!',
+];
+export const QUICK_CHAT_FROM = 8;
 
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {
@@ -87,6 +92,8 @@ export class Screens {
     this.data = data;
     this.logoCanvas = null;
     this.root.classList.remove('hidden');
+    // The pause screen stands over a court still in view, dimmed.
+    this.root.classList.toggle('over-match', name === 'paused');
     this.root.scrollTop = 0;
     const build = this['screen' + name[0].toUpperCase() + name.slice(1)];
     if (!build) throw new Error('unknown screen: ' + name);
@@ -177,6 +184,20 @@ export class Screens {
     input.addEventListener('change', commit);
     input.addEventListener('blur', commit);
     return input;
+  }
+
+  /**
+   * Emoji and quick-chat, for talking without free text: the lobby, the
+   * results and the pause screen carry them — never a rally in progress.
+   */
+  emoteBar() {
+    const bar = document.createElement('div');
+    bar.className = 'chat';
+    const btn = (e, i) => `<button data-action="emote" data-emote="${i}">${esc(e)}</button>`;
+    bar.innerHTML = `
+      <div class="emotes">${EMOTES.slice(0, QUICK_CHAT_FROM).map(btn).join('')}</div>
+      <div class="quick">${EMOTES.slice(QUICK_CHAT_FROM).map((e, i) => btn(e, i + QUICK_CHAT_FROM)).join('')}</div>`;
+    return bar;
   }
 
   /* ---------------------------------------------------------------- */
@@ -286,7 +307,11 @@ export class Screens {
       ${items}
       <h3 style="margin-top:12px">Pressure</h3>
       <p>Past twenty returns the paddles start shrinking and the ball keeps
-      accelerating. No rally lasts forever.</p>`;
+      accelerating. No rally lasts forever.</p>
+      <h3 style="margin-top:12px">Stepping away</h3>
+      <p>A notification or an app switch mid-match pauses the game on both phones.
+      It picks up with a countdown when you&rsquo;re back &mdash; but after 30 seconds
+      away, the match is called off. Both phones need an up-to-date game for this.</p>`;
     fillGlyphs(panel);
     wrap.appendChild(panel);
 
@@ -775,20 +800,23 @@ export class Screens {
 
   screenLobby(data) {
     const {
-      isHost, myChar, theirChar, theirName, theirReady, myReady, myFlair, flairProgress,
+      isHost, myChar, theirChar, theirName, theirReady, theirAway, myReady, myFlair, flairProgress,
       stage, crates, target, party, rtt, protocol, theirProtocol,
     } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('CHOOSE YOUR FIGHTER', { scale: 2 }));
 
+    // Away: their game is off their screen — sharing a code from a chat app,
+    // say. The lobby waits for them.
     const versus = document.createElement('div');
     versus.className = 'panel tight';
     versus.innerHTML = `
       <div class="status" style="justify-content:space-between">
-        <span><span class="dot ok"></span>${esc(this.profile.name || 'YOU')}</span>
+        <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}</span>
         <span class="muted">${rtt ? rtt + 'ms' : 'linked'}</span>
-        <span>${esc(theirName || 'FRIEND')}<span class="dot ${theirReady ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
+        <span>${esc(theirName || 'FRIEND')}${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
+          class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
       </div>`;
     wrap.appendChild(versus);
 
@@ -935,11 +963,7 @@ export class Screens {
     fillGlyphs(stageSel);
     wrap.appendChild(stageSel);
 
-    const emotes = document.createElement('div');
-    emotes.className = 'emotes';
-    emotes.innerHTML = EMOTES.map((e, i) =>
-      `<button data-action="emote" data-emote="${i}">${e}</button>`).join('');
-    wrap.appendChild(emotes);
+    wrap.appendChild(this.emoteBar());
 
     const go = document.createElement('div');
     go.style.display = 'flex';
@@ -993,11 +1017,7 @@ export class Screens {
       </table>`;
     wrap.appendChild(panel);
 
-    const emotes = document.createElement('div');
-    emotes.className = 'emotes';
-    emotes.innerHTML = EMOTES.map((e, i) =>
-      `<button data-action="emote" data-emote="${i}">${e}</button>`).join('');
-    wrap.appendChild(emotes);
+    wrap.appendChild(this.emoteBar());
 
     const actions = document.createElement('div');
     actions.style.display = 'flex';
@@ -1013,18 +1033,63 @@ export class Screens {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Paused                                                            */
+
+  /**
+   * Mid-match, the friend's game left their screen: the court holds still
+   * under this one while it waits for them. Shown over the match, not in
+   * place of it — App keeps drawing the frozen court underneath — and the
+   * seconds left are ticked in place, so a tap on an emote is never lost to a
+   * redraw.
+   */
+  screenPaused({ name, left }) {
+    const wrap = document.createElement('div');
+    wrap.className = 'screen';
+    wrap.appendChild(pixelLabel('PAUSED', { scale: 3 }));
+
+    const who = esc(name || 'Your friend');
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML = `
+      <p><b>${who} left the game for a moment.</b></p>
+      <p style="margin-top:6px">The match waits, and picks up with a countdown once they&rsquo;re
+        back. If they aren&rsquo;t back in <b id="away-left">${left}</b> seconds, it&rsquo;s
+        called off.</p>
+      <p style="margin-top:6px"><small>What you send here pops up on their screen when they return.</small></p>`;
+    wrap.appendChild(panel);
+
+    wrap.appendChild(this.emoteBar());
+
+    const leave = document.createElement('button');
+    leave.className = 'btn secondary';
+    leave.dataset.action = 'leave';
+    leave.textContent = 'Stop waiting';
+    wrap.appendChild(leave);
+    return wrap;
+  }
+
+  /** The pause screen's countdown, updated without redrawing the screen. */
+  tickPause(left) {
+    if (this.current !== 'paused') return;
+    const el = document.getElementById('away-left');
+    if (el && el.textContent !== String(left)) el.textContent = String(left);
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Disconnected                                                      */
 
   /**
    * Why the link went, when, and whether either phone had left the screen —
    * enough to tell a WiFi problem from a paused phone at a glance, and the
-   * Copy diagnostics button carries the rest to a bug report.
+   * Copy diagnostics button carries the rest to a bug report. A match called
+   * off because a phone stayed away too long comes here too, under its own
+   * title.
    */
   screenLost(data) {
-    const { text, facts = [], hint } = data;
+    const { title = 'LINK LOST', text, facts = [], hint } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
-    wrap.appendChild(pixelLabel('LINK LOST', { scale: 3, color: '#ff4d3d' }));
+    wrap.appendChild(pixelLabel(title, { scale: 3, color: '#ff4d3d' }));
     const panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML = `

@@ -5,7 +5,7 @@
 // sends its paddle position, renders what it is told, and predicts only its
 // own paddle so the controls never feel rubbery.
 
-import { Screens, EMOTES } from './ui/screens.js';
+import { Screens, EMOTES, QUICK_CHAT_FROM } from './ui/screens.js';
 import { Renderer } from './game/render.js';
 import { Input } from './game/input.js';
 import { Fx, reactTo } from './game/fx.js';
@@ -40,10 +40,22 @@ const HISTORY_CHUNK = 40;
 //   2  stage crates (REFLECTION, SPIRE, ARCO, AVALANCHE)
 //   3  balance version 2: the narrower AEGIS barrier's position rides the
 //      snapshot, and GU's midline wall is a prop older builds can't draw
-const PROTOCOL = 3;
+//   4  a match pauses while a phone is off its screen; the hold rides the
+//      snapshot
+const PROTOCOL = 4;
 // GU's midline wall waits for both phones to speak this: an older guest would
 // see the ball bounce off nothing, to the sound and spray of a snowdrift.
 const MIDLINE_SINCE = 3;
+// Likewise the pause: an older phone would neither hold its match for this
+// one nor count back in, and gives up on a quiet friend after 8 s regardless.
+const PAUSE_SINCE = 4;
+// How long the other phone may go unheard before the link is given up on. In
+// play, a silent opponent is a point being lost; anywhere else nothing is, and
+// a friend who is sharing their reply from a chat app needs the time.
+const MATCH_SILENCE = 8000;
+const LOBBY_SILENCE = 30000;
+// How long a paused match waits for a phone to come back before calling it off.
+const AWAY_LIMIT = 30000;
 // How far back predictPaddle remembers where our own paddle has been. Sized to
 // cover the whole staleness of the echoed paddle position with room to spare:
 // input send interval + RTT + host frame (and its up-to-6-step backlog) +
@@ -61,8 +73,11 @@ const STEP_LABEL = {
 const WIFI_HINT = 'Both phones need to stay on the same WiFi. Some guest networks block '
   + 'phones from talking to each other — a personal hotspot works around that.';
 const AWAY_HINT = 'Switching apps or letting the screen lock pauses the game, and the other '
-  + 'phone gives up after a few seconds of silence. Keep RoGuPong on screen on both phones '
-  + 'while you play.';
+  + 'phone gives up if it stays away too long — 30 seconds, when both games are up to date. '
+  + 'Keep RoGuPong on screen on both phones while you play.';
+const CALLED_OFF_HINT = 'A match waits 30 seconds for a phone that leaves the screen — for a '
+  + 'notification, another app or a locked screen — then calls it off. Keep RoGuPong on screen '
+  + 'on both phones while you play.';
 
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 
@@ -134,6 +149,9 @@ class App {
     this.lastAway = null;         // { for, back } — our last spell in the background
     this.theirHiddenAt = null;
     this.theirLastAway = null;
+    this.matchAt = 0;             // when this match began, for how long a phone has been away from it
+    this.missedEmote = null;      // the last one that came in while this page was hidden
+    this.stallShown = false;      // the hiccup toast is up, so its recovery gets one too
     this.lastDrop = null;
     this.storageNote = 'unknown';
 
@@ -207,8 +225,10 @@ class App {
    * The page hid or came back. A hidden page is paused — on iOS entirely,
    * timers and audio included — and loses its wake lock, so coming back
    * means picking all of that up again. The other phone is told too: a
-   * friend who went quiet because they switched apps is a different problem
-   * from a WiFi that went quiet, and the Link Lost screen tells them apart.
+   * friend who switched apps mid-match is waited for — the match holds on
+   * both phones — and a friend who went quiet because they switched apps is a
+   * different problem from a WiFi that went quiet, which the Link Lost screen
+   * tells apart.
    */
   onVisibility() {
     const now = performance.now();
@@ -218,22 +238,38 @@ class App {
       this.hiddenAt = now;
       log('page hidden');
       audio.stopMusic();
+      this.updateHold();
       return;
     }
-    if (this.hiddenAt != null) {
-      this.lastAway = { for: now - this.hiddenAt, back: now };
-      log(`page visible after ${secs(now - this.hiddenAt)}`);
+    const since = this.hiddenAt;
+    if (since != null) {
+      this.lastAway = { for: now - since, back: now };
+      log(`page visible after ${secs(now - since)}`);
     }
     this.hiddenAt = null;
     // The first frames back span the whole absence; they say nothing about
-    // how fast this phone draws.
+    // how fast this phone draws, and a match shouldn't leap across it either.
     this.fpsCount = 0;
     this.fpsSum = 0;
     this.fpsNear30 = 0;
     this.fpsSkip = 2;
+    this.lastFrame = now;
     audio.resume();
     audio.playMusic(this.mode === 'match' ? 'match' : 'menu');
     if (this.wantAwake) this.keepAwake(true);
+    this.peer?.backOnScreen();
+    if (this.missedEmote) {
+      const { i, theirs } = this.missedEmote;
+      this.missedEmote = null;
+      setTimeout(() => this.popEmote(i, theirs), 300);
+    }
+    // Away past the limit: the other phone has called the match off, or is
+    // about to — whether or not word of it has arrived yet.
+    if (since != null && this.canPause() && now - Math.max(since, this.matchAt) > AWAY_LIMIT) {
+      this.callOff(this.view);
+      return;
+    }
+    this.updateHold();
   }
 
   get view() { return this.peer && !this.peer.isHost ? 1 : 0; }
@@ -289,7 +325,9 @@ class App {
   /* Frame loop                                                          */
 
   frame(now) {
-    const dt = Math.min(0.25, (now - this.lastFrame) / 1000);
+    // Never below zero: onVisibility restarts the clock, and a frame's
+    // timestamp can predate that.
+    const dt = Math.max(0, Math.min(0.25, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
     this.menuTime += dt;
     this.sampleFrameRate(dt);
@@ -449,11 +487,12 @@ class App {
       flairs: this.flairs(),
       localPaddleX: this.predictX,
       rtt: this.peer ? this.peer.rtt : 0,
-      showTouchHint: !this.input.touched && m.phase === 'countdown',
-      showTapHint: !this.profile.tapLearned && m.phase === 'play' && m.meter[this.view] >= 1,
+      showTouchHint: !this.input.touched && m.phase === 'countdown' && !m.holding,
+      showTapHint: !this.profile.tapLearned && m.phase === 'play' && !m.holding && m.meter[this.view] >= 1,
     });
 
     if (m.phase === 'over' && !this.finishing) this.finishMatch();
+    else this.watchAway();
   }
 
   /** Keep our own paddle glued to the thumb even while snapshots trickle in. */
@@ -497,9 +536,18 @@ class App {
     else if (err) this.predictX += err * Math.min(1, dt * 2.5);
   }
 
+  /** The match's opening countdown, and a paused match's counting back in. */
   countdownBeeps(m) {
-    if (m.phase !== 'countdown') { this.lastBeep = null; return; }
-    const n = Math.ceil(m.phaseTime);
+    const t = m.resume > 0 ? m.resume : m.phase === 'countdown' && !m.paused ? m.phaseTime : null;
+    if (t == null) {
+      // Back in mid-point, there is no serve to say the ball is moving.
+      if (this.resuming && m.phase === 'play' && !m.paused) audio.count(0);
+      this.lastBeep = null;
+      this.resuming = false;
+      return;
+    }
+    this.resuming = m.resume > 0;
+    const n = Math.ceil(t);
     if (this.lastBeep !== n) {
       this.lastBeep = n;
       audio.count(Math.max(0, n));
@@ -552,6 +600,10 @@ class App {
     audio.playMusic('match');
     this.keepAwake(true);
     this.go('match');
+    // Started with a phone already away — a rematch the guest asked for
+    // before switching apps — it waits for them from the first second.
+    this.matchAt = performance.now();
+    this.updateHold();
   }
 
   /**
@@ -669,21 +721,91 @@ class App {
   }
 
   /* ------------------------------------------------------------------ */
+  /* Pausing for a phone that left the screen                            */
+
+  /** A match in play that can hold for an absent phone: both builds must know how. */
+  canPause() {
+    return this.mode === 'match' && !!this.match && !!this.peer && !this.finishing
+      && this.match.phase !== 'over' && this.sharedProtocol() >= PAUSE_SINCE;
+  }
+
+  /**
+   * Hold the match while either phone is off its screen, and put the pause
+   * screen up on this one while it waits for the other. Called whenever
+   * either page hides or comes back. The host's hold is the one that counts
+   * and rides its snapshots; a guest holds its own copy meanwhile, so nothing
+   * drifts in the moments before the host's word arrives.
+   */
+  updateHold() {
+    const m = this.match;
+    if (!this.canPause()) return;
+    const was = m.paused;
+    m.hold(this.hiddenAt != null || this.theirHiddenAt != null);
+    if (m.paused !== was) log(m.paused ? 'match paused' : 'match resuming');
+    const waiting = this.theirHiddenAt != null;
+    if (waiting && this.screens.current !== 'paused') {
+      this.screens.show('paused', { name: this.theirName, left: Math.ceil(this.awayLeft() / 1000) });
+    } else if (!waiting && this.screens.current === 'paused') {
+      this.screens.hide();
+    }
+  }
+
+  /** Milliseconds before a match waiting for the other phone is called off. */
+  awayLeft() {
+    return AWAY_LIMIT - (performance.now() - Math.max(this.theirHiddenAt, this.matchAt));
+  }
+
+  /** Each frame of a match: tick the pause screen down, and call time on it. */
+  watchAway() {
+    if (this.theirHiddenAt == null || !this.canPause()) return;
+    const left = this.awayLeft();
+    if (left <= 0) this.callOff(1 - this.view);
+    else this.screens.tickPause(Math.ceil(left / 1000));
+  }
+
+  /**
+   * A phone stayed away past AWAY_LIMIT: the match is off. Both phones keep
+   * the clock, so whichever notices first says so, naming who was away.
+   */
+  callOff(p) {
+    log(`match called off: ${p === this.view ? 'this phone' : 'the other phone'} away too long`);
+    this.peer?.send({ t: 'bye', why: 'away', p });
+    this.onDrop(p === this.view ? 'away-self' : 'away');
+  }
+
+  /**
+   * How long the other phone may go unheard, where the players are now. A
+   * friend who went away mid-match is waited for by the pause, which calls
+   * the match off itself — the heartbeat only steps in a little after it.
+   */
+  linkPatience() {
+    if (this.mode !== 'match') return LOBBY_SILENCE;
+    if (this.theirHiddenAt != null && this.canPause()) return AWAY_LIMIT + 5000;
+    return MATCH_SILENCE;
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Connection                                                          */
 
   attachPeer(peer) {
     this.peer = peer;
     this.theirHiddenAt = null;
     this.theirLastAway = null;
+    this.missedEmote = null;
+    peer.patience = () => this.linkPatience();
     this.keepAwake(true);
     log(`${peer.isHost ? 'hosting' : 'joining'}: code ready`);
     peer.on('stall', () => {
       log('link: stalled, waiting for it to come back');
-      this.screens.toast('Connection hiccup — hold on…', 'warn');
+      // A friend who left the screen takes their end of the link with them
+      // (iOS parks the whole page): expected, not a hiccup.
+      this.stallShown = this.theirHiddenAt == null;
+      if (this.stallShown) this.screens.toast('Connection hiccup — hold on…', 'warn');
     });
     peer.on('recover', (ms) => {
       log(`link: back after ${secs(ms)}`);
-      this.screens.toast('Connection back', 'good');
+      if (this.stallShown) this.screens.toast('Connection back', 'good');
+      this.stallShown = false;
     });
     peer.on('open', () => {
       this.stopScanner();
@@ -770,6 +892,7 @@ class App {
       theirChar: this.theirChar,
       theirName: this.theirName,
       theirReady: this.theirReady,
+      theirAway: this.theirHiddenAt != null,
       myReady: this.myReady,
       myFlair: this.profile.flair,
       flairProgress: lb.flairProgress(this.profile),
@@ -872,23 +995,29 @@ class App {
         if (this.peer.isHost && this.myRematch) this.hostStart();
         break;
       case 'emote':
-        this.popEmote(EMOTES[msg.i] || '👋');
+        this.popEmote(Number.isInteger(msg.i) ? msg.i : -1, true);
         break;
       case 'away': {
-        // Their page hid or came back. Diagnostics only, for now: older
-        // builds never send it, so nothing may depend on hearing it.
+        // Their page hid or came back. It holds a match when both builds
+        // speak PAUSE_SINCE, and tells the Link Lost screen a paused phone
+        // from a lost WiFi. Builds from before it never send it, so nothing
+        // else may depend on hearing it.
         const now = performance.now();
         if (msg.v) {
-          this.theirHiddenAt = now;
+          if (this.theirHiddenAt == null) this.theirHiddenAt = now;
         } else if (this.theirHiddenAt != null) {
           this.theirLastAway = { for: now - this.theirHiddenAt, back: now };
           this.theirHiddenAt = null;
         }
         log(`friend: page ${msg.v ? 'hidden' : 'visible'}`);
+        this.updateHold();
+        this.refreshLobby();
         break;
       }
       case 'bye':
-        this.onDrop('bye');
+        // A match called off for a phone that stayed away says which one.
+        if (msg.why === 'away') this.onDrop(msg.p === this.view ? 'away-self' : 'away');
+        else this.onDrop('bye');
         break;
       default:
         break;
@@ -900,11 +1029,24 @@ class App {
     if (msg.k === 'i') {
       this.guestInput.x = msg.x;
     } else if (msg.k === 's' && !this.peer.isHost) {
-      if (this.match.applySnapshot(msg)) this.lastSnapAt = this.menuTime;
+      // A host off its screen sends nothing, so a snapshot arriving meanwhile
+      // left before it did — overtaking its 'away' on the other channel — and
+      // would set a held court moving again.
+      if (this.theirHiddenAt != null && this.canPause()) return;
+      const m = this.match;
+      if (!m.applySnapshot(msg)) return;
+      this.lastSnapAt = this.menuTime;
+      // Paused with both phones on screen: the host has yet to hear that this
+      // one is back. Keep counting in rather than flicker back to a pause.
+      if (m.paused && this.hiddenAt == null && this.canPause()) m.hold(false);
     }
   }
 
-  /** reason: 'bye', or the peer's 'timeout' | 'disconnected' | 'failed' | 'closed'. */
+  /**
+   * reason: 'bye'; 'away' or 'away-self' for a match called off because the
+   * other phone or this one stayed away too long; or the peer's 'timeout' |
+   * 'disconnected' | 'failed' | 'closed'.
+   */
   onDrop(reason) {
     const drop = this.describeDrop(reason);
     this.lastDrop = drop;
@@ -933,13 +1075,17 @@ class App {
     const who = this.theirName || 'your friend';
     const Who = this.theirName || 'Your friend';
     const quiet = opened ? now - p.lastSeen : 0;
+    const limit = AWAY_LIMIT / 1000;
     const text = {
       bye: `${Who} left.`,
+      away: `${Who} left the game for over ${limit} seconds, so the match was called off.`,
+      'away-self': `You left the game for over ${limit} seconds, so the match was called off.`,
       timeout: `Nothing came through from ${who}'s phone for ${Math.round(quiet / 1000)} seconds.`,
       disconnected: `The link to ${who}'s phone went down and didn't come back.`,
       failed: opened ? `The link to ${who}'s phone failed.` : 'The two phones couldn\'t reach each other.',
       closed: `${Who}'s phone closed the connection.`,
     }[reason] || 'The connection dropped.';
+    const calledOff = reason === 'away' || reason === 'away-self';
 
     const facts = [['When', STEP_LABEL[step] || 'In the menus']];
     if (opened) {
@@ -955,10 +1101,12 @@ class App {
     const leftScreen = this.hiddenAt != null || this.theirHiddenAt != null
       || (this.lastAway && now - this.lastAway.back < 30000)
       || (this.theirLastAway && now - this.theirLastAway.back < 30000);
-    const hint = reason === 'bye' ? null : opened && leftScreen ? AWAY_HINT : WIFI_HINT;
+    const hint = reason === 'bye' ? null : calledOff ? CALLED_OFF_HINT
+      : opened && leftScreen ? AWAY_HINT : WIFI_HINT;
 
     return {
       reason, step, text, facts, hint, wall: Date.now(),
+      title: calledOff ? 'CALLED OFF' : 'LINK LOST',
       link: p ? this.linkSummary(p, now) : 'none',
     };
   }
@@ -997,7 +1145,7 @@ class App {
       `wake lock: ${this.wakeLockNote}`,
       `storage: ${this.storageNote} · ${lb.allMatches().length} matches kept`,
       `page: ${document.hidden ? 'hidden' : 'visible'} · ${navigator.onLine ? 'online' : 'offline'} · `
-        + `on ${this.mode === 'match' ? 'a match' : this.screens.current || '?'}`,
+        + `on ${this.mode === 'match' ? (this.match?.holding ? 'a paused match' : 'a match') : this.screens.current || '?'}`,
       `link: ${this.peer ? this.linkSummary(this.peer) : 'none'}`,
       d ? `last drop: ${d.reason} at ${clock(d.wall)} — ${d.text}` : 'last drop: none this session',
       ...(d ? [`  ${d.facts.map(([k, v]) => `${k}: ${v}`).join(' · ')}`, `  link then: ${d.link}`] : []),
@@ -1019,10 +1167,29 @@ class App {
     }
   }
 
-  popEmote(glyph) {
+  /**
+   * Pop emote i, sent by the other phone or by this one. A quick-chat line
+   * comes in a speech bubble saying who it is from; an index this build
+   * doesn't know — a newer phone's — pops as a wave. One that arrives while
+   * this page is hidden would play to nobody, so the latest waits for the
+   * page to come back.
+   */
+  popEmote(i, theirs) {
+    if (document.hidden) {
+      if (theirs) this.missedEmote = { i, theirs };
+      return;
+    }
     const el = document.getElementById('emote-pop');
-    el.textContent = glyph;
+    const say = i >= QUICK_CHAT_FROM && i < EMOTES.length;
     el.classList.remove('show');
+    el.classList.toggle('say', say);
+    if (say) {
+      const who = document.createElement('small');
+      who.textContent = theirs ? this.theirName || 'FRIEND' : 'YOU';
+      el.replaceChildren(who, EMOTES[i]);
+    } else {
+      el.textContent = EMOTES[i] || '👋';
+    }
     void el.offsetWidth;
     el.classList.add('show');
     audio.blip(1000, 0.08, 'square', 0.1);
@@ -1381,7 +1548,7 @@ class App {
         break;
       case 'emote': {
         const i = Number(data.emote) || 0;
-        this.popEmote(EMOTES[i]);
+        this.popEmote(i, false);
         this.peer?.send({ t: 'emote', i });
         break;
       }

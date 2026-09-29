@@ -286,7 +286,7 @@ tr.split td.num { padding-left: 5px; }
   display: flex; align-items: center; gap: 8px;
   font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim);
 }
-.dot { width: 10px; height: 10px; background: var(--dim); border: 2px solid #16092a; }
+.dot { display: inline-block; width: 10px; height: 10px; background: var(--dim); border: 2px solid #16092a; }
 .dot.ok { background: var(--green); }
 .dot.warn { background: var(--gold); }
 .dot.bad { background: var(--red); }
@@ -310,11 +310,22 @@ tr.split td.num { padding-left: 5px; }
 .toast.warn { border-color: var(--gold); }
 .panel.notice { border-color: var(--gold); }
 
+.chat { display: flex; flex-direction: column; gap: 6px; }
 .emotes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.emotes button {
+.emotes button, .quick button {
   padding: 10px 0; font-size: 1.1rem; background: #170c2c;
   border: 3px solid #3d2a63; cursor: pointer; color: var(--ink);
 }
+/* Quick-chat lines wrap as chips, as many to a row as fit. */
+.quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick button {
+  flex: 1 1 auto; min-height: 44px; padding: 8px 10px;
+  font-family: var(--font); font-size: 0.68rem; font-weight: 800;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+/* The pause screen: the frozen court stays in view underneath, dimmed. */
+#app.over-match { background: rgba(11, 6, 22, 0.72); }
 
 .spacer { flex: 1; }
 .center { text-align: center; }
@@ -326,6 +337,15 @@ tr.split td.num { padding-left: 5px; }
   font-size: 3rem; z-index: 60; pointer-events: none; opacity: 0;
 }
 #emote-pop.show { animation: emote 1.4s steps(8) both; }
+/* A quick-chat line: a speech bubble with who said it, up long enough to read. */
+#emote-pop.say {
+  max-width: 86vw; padding: 8px 14px; text-align: center; white-space: nowrap;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink); background: var(--bg1); border: 3px solid var(--edge);
+  box-shadow: 0 5px 0 var(--shadow);
+}
+#emote-pop.say small { display: block; font-size: 0.6rem; letter-spacing: 0.14em; color: var(--cyan); }
+#emote-pop.say.show { animation-duration: 2.2s; }
 @keyframes emote {
   0% { opacity: 0; transform: translateX(-50%) scale(0.4); }
   15% { opacity: 1; transform: translateX(-50%) scale(1.2); }

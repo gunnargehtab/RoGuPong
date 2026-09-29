@@ -89,12 +89,18 @@ moment it lands in the box.
 > the link never comes up, put one phone on a personal hotspot and connect the
 > other to it.
 
+> **If you have to step away** mid-match — a notification, another app — the
+> match pauses on both phones and picks up with a countdown when you're back.
+> After 30 seconds away it is called off. Outside a match, the other phone
+> waits 30 seconds for yours before giving up. Both phones need an up-to-date
+> game for this; against an older one, 8 seconds of silence in a match still
+> ends it.
+
 > **If the link drops**, the Link Lost screen says why, and whether either
-> phone had left the screen — switching apps or letting the screen lock pauses
-> the game. **Copy diagnostics** (there, and at the foot of the title screen)
-> copies the details of the phone and what just happened, ready to paste into
-> an issue. A brief WiFi hiccup no longer ends the session: the game waits up
-> to ten seconds for the link to come back.
+> phone had left the screen. **Copy diagnostics** (there, and at the foot of
+> the title screen) copies the details of the phone and what just happened,
+> ready to paste into an issue. A brief WiFi hiccup doesn't end the session:
+> the game waits at least ten seconds for the link to come back.
 
 ### Controls
 
@@ -132,6 +138,10 @@ ball. Hit a crate with the ball and the pickup is yours.
 **Party mode** is a lobby toggle for when a clean duel is not the mood: crates
 rain three times as fast, three fit on the court at once, and multiball turns
 up far more often. Same physics, same specials — just played in a hailstorm.
+
+**Emotes and quick-chat** in the lobby, on the results and on the pause
+screen: eight emoji, and eight lines like "GG", "Nice shot!" and "Rematch?"
+that pop up in a speech bubble on the other phone. Never mid-rally.
 
 **Flair** is earned, not bought: a rainbow trail for a 20-hit rally, flames
 for ten wins, starlight for touring all four stages, gold for a shutout. Pick
