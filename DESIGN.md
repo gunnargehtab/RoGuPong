@@ -467,10 +467,27 @@ it's reloaded — conservative, but never a court one phone can't draw.)
 | 1 | Everything before the number existed |
 | 2 | The stage crates: REFLECTION, SPIRE, ARCO, AVALANCHE |
 | 3 | Balance version 2: the narrower, timed AEGIS barrier and GU's midline wall |
+| 4 | The mid-match pause (§9): the hold rides the snapshot |
 
 Anything that must not be lost — character picks, the match start, the final
 result, emotes, the guest's special press — goes on a second, **reliable
 and ordered** channel. Both channels ride one peer connection.
+
+**Holding a match.** When either phone leaves its screen mid-match (§9), both
+phones hold the match: the clock, the balls, the crates and every timer
+freeze, and only the paddles still follow their thumbs. When everyone is back,
+a 3-second countdown runs before anything moves, so the returning player finds
+their paddle first. The host's hold is the one that counts. It rides the
+snapshot as one number, sent only while there is a hold: -1 for paused, or
+else the seconds of countdown left. The tick keeps counting through a hold, so
+those snapshots are fresh. A guest also holds its own copy of the match the
+moment it hears either phone has gone, rather than waiting for a snapshot to
+say so, and drops any snapshot that reaches it while the host is away.
+Those snapshots left before the host hid (a hidden page draws no frames, so
+it sends none), overtaking its `away` message on the other channel, and would
+set the court moving again. Counting back in, the guest waits for the host's
+countdown rather than running its own, so the ball never sets off early on
+one phone.
 
 ---
 
@@ -705,8 +722,10 @@ hold.
 | ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
 | Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Link Lost says the phones couldn't reach each other, with a note suggesting a hotspot |
-| The link blips (WiFi power save, a router hiccup) | WebRTC calls it `disconnected`; the game waits up to 10 s for it to recover, with a toast, before calling it lost |
-| The other phone goes silent | The heartbeat gives up after 8 s with nothing heard and shows the Link Lost screen |
+| The link blips (WiFi power save, a router hiccup) | WebRTC calls it `disconnected`; the game waits at least 10 s for it to recover, with a toast, before calling it lost |
+| The other phone goes silent | The heartbeat gives up after 8 s with nothing heard in a match, 30 s anywhere else, and shows the Link Lost screen |
+| This phone leaves the screen | No verdict on the link while it's hidden, nor for a couple of heartbeats after it comes back |
+| A phone leaves the screen mid-match | The match holds on both phones, and the waiting one shows a pause screen with emotes and quick-chat. It resumes with a 3 s countdown, or is called off after 30 s |
 | A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
 | Any drop | Link Lost says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
 | A match history too long for one message | Streamed after `hello` in paced chunks; a drop mid-stream keeps what arrived |
@@ -719,27 +738,56 @@ hold.
 | No internet on the second visit | Service worker serves the whole game from cache |
 | The phone can't hold 45 fps | Demoted to the cheap render path within seconds, for the session (see below) |
 
-**Keeping the link.** WebRTC's `disconnected` state is meant to be temporary —
-a WiFi power-save stall, a router blip, the other phone's radio napping — and
-usually clears by itself, so the game gives it 10 s before calling the link
-lost, holding the heartbeat's verdict meanwhile. The cost is that a phone that
-really vanishes (its WiFi gone, its browser killed) is reported about 15 s
-later rather than 8: WebRTC takes around 5 s to call the link down, then the
-grace runs. A page that closes or reloads doesn't pay it, since it sends `bye`
-on its way out. The wake lock matters as much as the grace: a phone that dims
-and locks pauses the page, and the other phone soon gives up on it. So the
-lock is held from the moment a handshake starts until the phones part, and —
-because browsers drop it whenever the page hides, iOS on every notification or
-app switch — asked for again each time the page comes back.
+**Keeping the link.** The heartbeat's patience depends on where the players
+are. In a match, 8 s with nothing heard is an opponent gone, and every second
+of it is a point being lost to a frozen paddle. Anywhere else — the lobby, the
+results, the moments after a handshake while a friend is still sharing their
+reply from a chat app — nothing is lost by waiting, so the phone waits 30 s.
+WebRTC's `disconnected` state is meant to be temporary — a WiFi power-save
+stall, a router blip, the other phone's radio napping — and usually clears by
+itself. So a link WebRTC calls down gets at least 10 s, or the heartbeat's
+patience if that is longer, before it is called lost. The cost is that a
+phone that really vanishes (its WiFi gone, its browser killed) is reported
+about 15 s later in a match rather than 8: WebRTC takes around 5 s to call the
+link down, then the grace runs. A page that closes or reloads doesn't pay it,
+since it sends `bye` on its way out.
+
+A hidden page passes no verdicts at all: its timers are throttled or stopped,
+and on iOS the whole page is parked, so its heartbeat would only be judging its
+own absence. Coming back, it pings at once and gives the replies a couple of
+heartbeats to land before judging, since what it missed is still on its way in.
+The wake lock matters as much as all this: a phone that dims and locks pauses
+the page. So the lock is held from the moment a handshake starts until the
+phones part. Browsers drop it whenever the page hides (iOS on every
+notification or app switch), so it is asked for again each time the page
+comes back.
+
+**Stepping away mid-match.** A notification, an app switch or an accidental
+swipe home used to cost the point in play and, 8 s later, the whole session.
+Now each phone tells the other when its page hides or comes back (`away` on
+the reliable channel), and a match holds while either phone is gone (§5).
+The phone still on screen puts up a pause screen: who left, the seconds left
+to wait, and the emotes and quick-chat lines, whose latest one waits for the
+away phone to come back before it pops. A match waits 30 s for a phone that
+left, then calls it off, and both phones keep that clock. The waiting phone
+ends it on time and says so in its `bye`. The phone that was away, coming
+back too late, ends it too, even if that word hasn't reached it yet. A match
+called off this way lands on the Link Lost screen under its own title, naming
+who was away. While the friend is away the heartbeat's patience stretches to
+35 s, so the pause's own verdict, which says what actually happened, always
+comes first. The link stalling meanwhile raises no hiccup toast either: iOS
+parks the away phone's end of the link along with its page. The pause needs
+protocol 4 on both phones. Against an older build nothing holds, and 8 s of
+silence in a match still ends it.
 
 **When it drops anyway.** Every drop lands on Link Lost with its real reason
-(the friend left, nothing heard for 8 s, the link went down and didn't come
-back, the connection failed, the other phone closed it), the step it happened
-at, how long since the last message, and whether either phone had left the
-screen. That last one is what tells a WiFi problem from a paused phone, so each
-phone tells the other when its page hides or comes back (`away` on the
-reliable channel). Older builds never send it, so nothing but the diagnostics
-depends on it. A **Copy diagnostics** button, on Link Lost and at the foot of
+(the friend left, nothing heard for 8 or 30 s, the link went down and didn't
+come back, the connection failed, the other phone closed it, the match was
+called off), the step it happened at, how long since the last message, and
+whether either phone had left the screen. That last one is what tells a WiFi
+problem from a paused phone. It comes from the same `away` messages. Builds
+from before them never send them, so nothing but the pause and the diagnostics
+depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
 the title screen, copies that with a description of the phone (browser,
 home-screen app or tab, safe area, graphics and frame rate, audio and
 wake-lock state) and a log of the last 60 moments that matter: the page hiding
@@ -792,3 +840,13 @@ compositor — a real slice of touch-to-paddle latency on Android.
 - **No account system.** A name typed on the title screen is the whole
   identity, and that is enough for a leaderboard between friends — with a
   nudge when a name is missing or taken (§8).
+- **No in-game voice, video or free-text chat.** Players talk through eight
+  emoji and eight quick-chat lines ("GG", "Nice shot!", "Rematch?", "One
+  sec!"…) in the lobby, on the results and on the pause screen, never over a
+  rally in progress. They travel as an index into one list, so new lines are
+  only ever appended, and a build from before them pops a 👋 instead. A line
+  arrives in a speech bubble naming who sent it. Voice was ruled out because
+  turning on the microphone changes how iOS routes the game's sound. Video
+  was ruled out because a video tile covers the court on a portrait phone.
+  Free text was ruled out because it would need moderating for the kids this
+  is played by.

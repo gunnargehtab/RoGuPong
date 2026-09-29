@@ -37,6 +37,7 @@ const MAX_BALLS = 5;
 const PADDLE_SPEED = 2.35;    // court widths per second
 const SERVE_DELAY = 1.15;
 const COUNTDOWN = 3.0;
+const RESUME = 3.0;           // seconds of countdown before a paused match moves again
 const CRATE_EVERY = [6.0, 9.5];
 const MAX_CRATES = 2;
 // Party mode: same game, chaos dial turned up. Crates rain, and up to three
@@ -128,6 +129,10 @@ export class Match {
     this.time = 0;
     this.phase = 'countdown';     // countdown | play | point | over
     this.phaseTime = COUNTDOWN;
+    // A phone left the screen: whatever the phase, nothing moves but the
+    // paddles until it is back and the resume countdown has run out.
+    this.paused = false;
+    this.resume = 0;              // seconds of that countdown left
     this.scores = [0, 0];
     this.meter = [0, 0];
     this.streak = [0, 0];         // consecutive points, for the on-fire fanfare
@@ -244,12 +249,43 @@ export class Match {
     if (input.special) this.input[i].special = true;
   }
 
+  /**
+   * Someone left the screen (true), or everyone is back (false). Holding
+   * freezes the match where it stands; letting go runs the resume countdown
+   * first, so the phone that was away finds its paddle before the ball moves.
+   * The host's word rides the snapshot; a guest calls this too, for the
+   * moments before that word arrives.
+   */
+  hold(away) {
+    if (away) {
+      this.paused = true;
+      this.resume = 0;
+    } else if (this.paused) {
+      this.paused = false;
+      this.resume = RESUME;
+    }
+  }
+
+  get holding() { return this.paused || this.resume > 0; }
+
   /* ---------------------------------------------------------------- */
   /* Simulation (host only)                                            */
 
   step(dt) {
     dt = Math.min(dt, 1 / 30);
+    // The tick runs on through a hold, so the snapshots that say so are fresh.
     this.tick++;
+    if (this.holding) {
+      if (!this.paused) this.resume = Math.max(0, this.resume - dt);
+      this.shake = Math.max(0, this.shake - dt * 2.6);
+      // Paddles still follow their thumbs, ready for the ball; a special
+      // pressed now would fire into a frozen court, so it is dropped.
+      for (let i = 0; i < 2; i++) {
+        this.input[i].special = false;
+        this.movePaddle(i, dt);
+      }
+      return;
+    }
     this.time += dt;
 
     if (this.hitstop > 0) {
@@ -979,6 +1015,9 @@ export class Match {
         q.kind, +q.x.toFixed(3), +q.y.toFixed(3), +q.size.toFixed(3), +q.t.toFixed(2), q.p, q.hits,
       ]);
     }
+    // A hold, likewise only while there is one: -1 paused, else the seconds of
+    // resume countdown left.
+    if (this.holding) snap.pa = this.paused ? -1 : +this.resume.toFixed(2);
     this.outbox = [];
     return snap;
   }
@@ -996,6 +1035,8 @@ export class Match {
     this.winner = s.wn;
     if (s.st) this.streak = s.st;
     this.shake = Math.max(this.shake, s.sh);
+    this.paused = s.pa === -1;
+    this.resume = s.pa > 0 ? s.pa : 0;
 
     s.pd.forEach((p, i) => {
       const pad = this.paddles[i];
@@ -1055,6 +1096,12 @@ export class Match {
 
   /** Guest-side smoothing between the 30 Hz snapshots. */
   extrapolate(dt) {
+    // Held, nothing drifts. The resume countdown is left to the host's
+    // snapshots too: running it down here would set the ball off early.
+    if (this.holding) {
+      this.shake = Math.max(0, this.shake - dt * 2.6);
+      return;
+    }
     if (this.phase !== 'play') return;
     for (const b of this.balls) {
       const rad = ballRadius(b);

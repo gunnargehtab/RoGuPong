@@ -1245,19 +1245,31 @@ export class Renderer {
     const cx = c.x + c.w / 2;
     const cy = c.y + c.h * 0.42;
     const scale = Math.max(2, c.w / 60);
-
-    if (m.phase === 'countdown') {
-      const n = Math.ceil(m.phaseTime);
-      const frac = 1 - (m.phaseTime - Math.floor(m.phaseTime));
+    // A number that pops as each second begins, over a line of small print.
+    const count = (t, line) => {
+      const n = Math.ceil(t);
+      const frac = 1 - (t - Math.floor(t));
       const pop = 1 + (1 - Math.min(1, frac * 3)) * 0.8;
       drawText(ctx, n > 0 ? String(n) : 'GO', cx, cy, {
         scale: scale * 2.2 * pop, color: n > 0 ? '#ffffff' : '#8affc1',
         outline: '#1a0d2b', align: 'center', baseline: 'middle',
       });
-      drawText(ctx, 'FIRST TO ' + m.target, cx, cy + scale * 22, {
+      drawText(ctx, line, cx, cy + scale * 22, {
         scale: Math.max(1, scale * 0.6), color: 'rgba(255,255,255,0.7)',
         align: 'center', baseline: 'middle',
       });
+    };
+
+    // A paused match has the pause screen standing over it, or no one to see
+    // it; counting back in, the countdown is the only thing to read.
+    if (m.paused) return;
+    if (m.resume > 0) {
+      count(m.resume, 'GET READY');
+      return;
+    }
+
+    if (m.phase === 'countdown') {
+      count(m.phaseTime, 'FIRST TO ' + m.target);
       if (m.party) {
         const pulse = 0.6 + Math.sin(time * 6) * 0.4;
         drawText(ctx, 'PARTY MODE', cx, cy + scale * 30, {

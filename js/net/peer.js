@@ -29,11 +29,12 @@ const STATE_BACKLOG_MAX = 4096;
 // data rather than the whole run.
 const PACED_BACKLOG = 32768;
 const HEARTBEAT_MS = 1500;
-// This long without a word from the other phone and it is given up on.
+// This long without a word from the other phone and it is given up on — unless
+// the app says how patient to be where the players are (Peer.patience).
 const SILENCE_MS = 8000;
-// How long a link WebRTC calls 'disconnected' gets to come back. The state is
-// meant to be temporary — a WiFi power-save stall, a router blip, the other
-// phone's radio napping — and usually clears by itself within seconds.
+// How long a link WebRTC calls 'disconnected' gets to come back, at the least.
+// The state is meant to be temporary — a WiFi power-save stall, a router blip,
+// the other phone's radio napping — and usually clears by itself within seconds.
 const DISCONNECT_GRACE_MS = 10000;
 
 function waitForIceGathering(pc) {
@@ -81,8 +82,11 @@ export class Peer {
     this.openedAt = 0;            // when the channels opened; 0 while still connecting
     this.lastSeen = 0;
     this.rtt = 0;
-    this.grace = null;            // timer while a 'disconnected' link gets its chance
-    this.stalledAt = 0;
+    this.stalledAt = 0;           // when the link went 'disconnected'; 0 while it is up
+    this.judgeFrom = 0;           // no verdicts before this: the page just came back
+    // Milliseconds of silence to put up with. The app swaps in its own: how
+    // patient to be depends on whether a match is on.
+    this.patience = () => SILENCE_MS;
 
     this.pc.addEventListener('connectionstatechange', () => {
       const s = this.pc.connectionState;
@@ -182,36 +186,56 @@ export class Peer {
     });
   }
 
+  /**
+   * Ping every HEARTBEAT_MS, and give the link up once the other phone has
+   * been quiet for longer than the app's patience. A hidden page passes no
+   * verdicts at all: its timers are throttled or stopped, and whatever it
+   * missed meanwhile is still on its way in.
+   */
   startHeartbeat() {
     clearInterval(this.hb);
     this.hb = setInterval(() => {
       if (this.closed) return;
-      this.raw(this.ctl, { t: 'ping', n: performance.now() });
-      // While the link is down, silence is expected and its grace decides.
-      if (!this.grace && performance.now() - this.lastSeen > SILENCE_MS) this.handleDrop('timeout');
+      const now = performance.now();
+      this.raw(this.ctl, { t: 'ping', n: now });
+      if (document.hidden || now < this.judgeFrom || now - this.lastSeen <= this.patience()) return;
+      // A link that is down gets its grace however patient the app is.
+      if (!this.stalledAt) this.handleDrop('timeout');
+      else if (now - this.stalledAt > DISCONNECT_GRACE_MS) this.handleDrop('disconnected');
     }, HEARTBEAT_MS);
   }
 
   /**
-   * The link went 'disconnected'. Rather than drop on the spot, give it
-   * DISCONNECT_GRACE_MS to come back — the heartbeat holds its verdict
-   * meanwhile — and only then call it lost.
+   * This page is back on screen. Replies to its pings, and whatever else it
+   * missed, may take a moment to land — so ask at once, and pass no verdict
+   * for a couple of heartbeats.
+   */
+  backOnScreen() {
+    if (!this.connected) return;
+    this.judgeFrom = performance.now() + HEARTBEAT_MS * 2;
+    this.raw(this.ctl, { t: 'ping', n: performance.now() });
+  }
+
+  /**
+   * The link went 'disconnected'. Rather than drop on the spot, give it at
+   * least DISCONNECT_GRACE_MS to come back — the heartbeat's patience, if
+   * that is longer — and only then call it lost.
    */
   startGrace() {
-    if (this.grace || this.closed) return;
+    if (this.stalledAt || this.closed) return;
     this.stalledAt = performance.now();
-    this.grace = setTimeout(() => this.handleDrop('disconnected'), DISCONNECT_GRACE_MS);
     this.emit('stall');
   }
 
   endGrace() {
-    if (!this.grace) return;
-    clearTimeout(this.grace);
-    this.grace = null;
+    if (!this.stalledAt) return;
+    const now = performance.now();
+    const ms = now - this.stalledAt;
+    this.stalledAt = 0;
     // The quiet was the stall's, not the other phone's: restart the clock so
     // the heartbeat doesn't hold it against the link it just got back.
-    this.lastSeen = performance.now();
-    this.emit('recover', this.lastSeen - this.stalledAt);
+    this.lastSeen = now;
+    this.emit('recover', ms);
   }
 
   handleDrop(reason) {
@@ -219,8 +243,6 @@ export class Peer {
     this.closed = true;
     this.connected = false;
     clearInterval(this.hb);
-    clearTimeout(this.grace);
-    this.grace = null;
     this.emit('drop', reason);
   }
 
@@ -301,8 +323,6 @@ export class Peer {
   close() {
     this.closed = true;
     clearInterval(this.hb);
-    clearTimeout(this.grace);
-    this.grace = null;
     try { this.pc.close(); } catch { /* already gone */ }
   }
 }
