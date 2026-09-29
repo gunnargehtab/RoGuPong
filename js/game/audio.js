@@ -41,6 +41,7 @@ export class Audio {
     this.musicGain = null;
     this.sfxGain = null;
     this.musicOn = true;
+    this.ducked = false;
     this.sfxOn = true;
     this.timer = null;
     this.step = 0;
@@ -67,7 +68,7 @@ export class Audio {
     this.master.gain.value = 0.8;
     this.master.connect(this.ctx.destination);
     this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = this.musicOn ? 0.28 : 0;
+    this.musicGain.gain.value = this.musicLevel();
     this.musicGain.connect(this.master);
     this.sfxGain = this.ctx.createGain();
     this.sfxGain.gain.value = this.sfxOn ? 0.55 : 0;
@@ -90,7 +91,22 @@ export class Audio {
 
   setMusic(on) {
     this.musicOn = on;
-    if (this.musicGain) this.musicGain.gain.value = on ? 0.28 : 0;
+    if (this.musicGain) this.musicGain.gain.value = this.musicLevel();
+  }
+
+  /**
+   * Music down under a voice. Online, friends talk over a call running
+   * alongside the game, and no browser says when one is on — so the music
+   * plays quieter for as long as an online link is up.
+   */
+  setDucked(on) {
+    this.ducked = on;
+    if (this.musicGain) this.musicGain.gain.value = this.musicLevel();
+  }
+
+  musicLevel() {
+    if (!this.musicOn) return 0;
+    return this.ducked ? 0.1 : 0.28;
   }
 
   setSfx(on) {

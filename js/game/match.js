@@ -7,7 +7,9 @@
 // The host simulates everything and broadcasts snapshots; the guest sends its
 // paddle position and renders what it is told, predicting only its own paddle
 // so the stick feels attached to the thumb. On a shared WiFi that is a handful
-// of milliseconds of lag, which is well inside "nobody notices".
+// of milliseconds of lag, which is well inside "nobody notices". Online it can
+// be a tenth of a second or more, which the guest's saves (grace) and the
+// ball it draws (applySnapshot's lead) both make up for.
 
 import { byId as charById } from './characters.js';
 import { rollItem, itemById } from './items.js';
@@ -58,6 +60,8 @@ const LEAN_K = 0.55;          // a ball flatter than this share (~57°) travels 
 const LEAN_MAX = 1.6;         // ... by up to this much, never past the rally's top speed
 const DRIFT_HITS = 2;         // blocks before a snowdrift is spent
 const DRIFT_DAMP = 0.88;      // speed kept by a ball the snow sends back
+const FACE_BAND = 0.09;       // how far past a paddle's face a ball can still be caught
+const WALL_MEMORY = 0.2;      // seconds a guest trusts a wall bounce it drew itself
 
 function mulberry(seed) {
   let a = seed >>> 0;
@@ -86,6 +90,34 @@ function crossingX(b, y) {
   const span = 1 - rad * 2;
   const u = ((b.x + b.vx * ((y - b.y) / b.vy) - rad) % (span * 2) + span * 2) % (span * 2);
   return rad + (u <= span ? u : span * 2 - u);
+}
+
+/**
+ * A ball the guest is drawing, gone past a side wall between snapshots: mirror
+ * it back inside and turn it round, as the host's bounce will. Returns the
+ * wall it bounced off (-1 left, 1 right), or 0.
+ */
+function foldWall(b, rad) {
+  if (b.x < rad) {
+    if (b.vx < 0) { b.vx = -b.vx; b.x = Math.min(2 * rad - b.x, 1 - rad); return -1; }
+    b.x = rad;
+  } else if (b.x > 1 - rad) {
+    if (b.vx > 0) { b.vx = -b.vx; b.x = Math.max(2 * (1 - rad) - b.x, rad); return 1; }
+    b.x = 1 - rad;
+  }
+  return 0;
+}
+
+/**
+ * Where a ball the guest is drawing would go from y0 to y1, stopped at the
+ * paddle face it is heading for. Whether it is returned there or goes by is
+ * the host's to say; the guest never draws it through a paddle on its own.
+ */
+function toFace(b, rad, y0, y1) {
+  if (!b.vy) return y1;
+  const face = b.vy > 0 ? PADDLE_Y[0] - PADDLE_H / 2 - rad : PADDLE_Y[1] + PADDLE_H / 2 + rad;
+  const crosses = b.vy > 0 ? y0 <= face && y1 > face : y0 >= face && y1 < face;
+  return crosses ? face : y1;
 }
 
 let ballSeq = 0;
@@ -164,6 +196,10 @@ export class Match {
     this.props = [];
     this.nextCrate = this.rollCrateDelay();
     this.input = [{ x: 0.5, special: false }, { x: 0.5, special: false }];
+    // Seconds after a ball crosses a player's paddle face that the paddle can
+    // still save it. The app sets it for a player seeing the court late — the
+    // guest, whose paddle reaches the host half a round trip after it moved.
+    this.grace = [0, 0];
     this.events = [];
     this.outbox = [];
     this.shake = 0;
@@ -416,10 +452,28 @@ export class Match {
       if (this.props.length) this.collideProps(b, x0, y0, true);
       this.collideCrates(b);
 
-      // Goals
-      if (b.y > 1 + rad) { this.concede(0, b, bi); continue; }
-      if (b.y < -rad) { this.concede(1, b, bi); continue; }
+      // Goals — held back while the paddle the ball just passed may yet turn
+      // out to have saved it.
+      if (b.y > 1 + rad && !this.inGrace(b, 0)) { this.concede(0, b, bi); continue; }
+      if (b.y < -rad && !this.inGrace(b, 1)) { this.concede(1, b, bi); continue; }
     }
+  }
+
+  /**
+   * A ball past player i's paddle face that the paddle may still save: it
+   * crossed less than grace[i] seconds ago. The guest's paddle reaches the
+   * host half a round trip after the guest moved it, so a save made in time
+   * on the guest's screen lands here just after the ball went by — the grace
+   * covers that trip, and the ball pops back to the paddle to be returned.
+   */
+  inGrace(b, i) {
+    const g = this.grace[i];
+    if (!(g > 0)) return false;
+    const rad = ballRadius(b);
+    const past = i === 0
+      ? b.y - (PADDLE_Y[0] - PADDLE_H / 2 - rad)
+      : PADDLE_Y[1] + PADDLE_H / 2 + rad - b.y;
+    return past > 0 && past <= Math.abs(b.vy) * this.lean(b) * g;
   }
 
   collidePaddle(b, i) {
@@ -430,8 +484,9 @@ export class Match {
     const surface = i === 0 ? py - PADDLE_H / 2 - rad : py + PADDLE_H / 2 + rad;
     const crossed = i === 0 ? b.y >= surface : b.y <= surface;
     if (!crossed) return;
-    // Only within a paddle's thickness — a ball already past it is a goal.
-    if (Math.abs(b.y - surface) > 0.09) return;
+    // Only within a paddle's thickness — a ball already past it is a goal —
+    // or within the grace of a player seeing the court late.
+    if (Math.abs(b.y - surface) > FACE_BAND && !this.inGrace(b, i)) return;
 
     const p = this.paddles[i];
     const half = this.paddleWidth(i) / 2;
@@ -1022,8 +1077,12 @@ export class Match {
     return snap;
   }
 
-  /** Returns whether the snapshot was applied (stale ticks are discarded). */
-  applySnapshot(s) {
+  /**
+   * Returns whether the snapshot was applied (stale ticks are discarded).
+   * `lead` is how old the snapshot is by the time it lands — half a round trip
+   * — and its balls are drawn that far ahead, where the host has them now.
+   */
+  applySnapshot(s, lead = 0) {
     if (s.n <= this.tick) return false;    // an unreliable channel reorders packets
     this.tick = s.n;
     this.phase = s.ph;
@@ -1057,6 +1116,7 @@ export class Match {
     // assigning positions makes the ball visibly pop. Keep the ball we are
     // already drawing and record where the host says it should be; extrapolate()
     // eases the difference away between packets.
+    const moving = lead > 0 && s.ph === 'play' && s.pa == null;
     const previous = new Map(this.balls.map((b) => [b.id, b]));
     this.balls = s.bl.map((b) => {
       const was = previous.get(b[5]);
@@ -1067,7 +1127,16 @@ export class Match {
         ghost: b[6] ? 1 : 0, beach: b[7] ? 1 : 0, held: b[8] ? 0 : -1, hx: 0,
         mirror: b[10] || 0,
       };
+      if (moving && fresh.held < 0) this.project(fresh, lead);
       if (!was) return fresh;
+      // Drawn off a side wall a moment ago, ahead of the host's word: a
+      // snapshot from just before that bounce still has the ball heading into
+      // the wall, and would turn it straight back round.
+      if (was.wallT > 0 && fresh.vx * was.wallSide > 0) {
+        fresh.vx = -fresh.vx;
+        fresh.wallT = was.wallT;
+        fresh.wallSide = was.wallSide;
+      }
       const gap = Math.hypot(was.x - fresh.x, was.y - fresh.y);
       // A big jump means a bounce or a fresh serve, not drift — take it as-is.
       if (gap > 0.12) return fresh;
@@ -1094,6 +1163,19 @@ export class Match {
     return true;
   }
 
+  /**
+   * Guest side: carry a ball the host reported `t` seconds forward along its
+   * heading, off the side walls and up to the paddle face it is heading for.
+   */
+  project(b, t) {
+    const rad = ballRadius(b);
+    const y = toFace(b, rad, b.y, b.y + b.vy * t);
+    if (b.vy) t = Math.min(t, (y - b.y) / b.vy);
+    b.x += b.vx * t;
+    b.y = y;
+    foldWall(b, rad);
+  }
+
   /** Guest-side smoothing between the 30 Hz snapshots. */
   extrapolate(dt) {
     // Held, nothing drifts. The resume countdown is left to the host's
@@ -1106,16 +1188,35 @@ export class Match {
     for (const b of this.balls) {
       const rad = ballRadius(b);
       const x0 = b.x, y0 = b.y;
-      b.x = clamp(b.x + b.vx * dt, rad, 1 - rad);
-      b.y += b.vy * dt;
+      b.x += b.vx * dt;
+      b.y = toFace(b, rad, y0, y0 + b.vy * dt);
+      // Off the side walls as the host will bounce it, rather than sliding
+      // along the wall until the host's word arrives. Where the host said the
+      // ball was is no use past a bounce — easing toward it would drag the
+      // ball back into the wall — so it is dropped until the next snapshot.
+      const side = foldWall(b, rad);
+      if (side) {
+        b.wallSide = side;
+        b.wallT = WALL_MEMORY;
+        b.tx = null;
+        b.ty = null;
+      } else if (b.wallT > 0) {
+        b.wallT = Math.max(0, b.wallT - dt);
+      }
       // Ease toward wherever the host last said this ball was, so the
-      // correction is a drift rather than a jump.
+      // correction is a drift rather than a jump — unless that point has
+      // reached a wall first, when the ball is left to get there itself.
       if (b.tx != null) {
         b.tx += b.vx * dt;
-        b.ty += b.vy * dt;
-        const k = Math.min(1, dt * 9);
-        b.x += (b.tx - b.x) * k;
-        b.y += (b.ty - b.y) * k;
+        b.ty = toFace(b, rad, b.ty, b.ty + b.vy * dt);
+        if (b.tx < rad || b.tx > 1 - rad) {
+          b.tx = null;
+          b.ty = null;
+        } else {
+          const k = Math.min(1, dt * 9);
+          b.x += (b.tx - b.x) * k;
+          b.y += (b.ty - b.y) * k;
+        }
       }
       b.mirror = Math.max(0, (b.mirror || 0) - dt);
       // Bounce off props here as well, rather than drawing the ball sailing

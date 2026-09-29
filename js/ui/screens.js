@@ -51,6 +51,19 @@ export function pixelLabel(text, opts = {}) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/** How long ago an invite was made, in words: "just now", "4 min ago", "2 h ago". */
+export function madeAgo(ms) {
+  const min = Math.floor(Math.max(0, ms) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 90) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 36 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+}
+
+// An online invite this old may no longer reach the phone that made it — its
+// way in from the internet can lapse — so both phones say so.
+export const STALE_INVITE = 10 * 60000;
+
 /**
  * A crate's glyph, drawn in the pixel font exactly as it appears on court.
  * Markup leaves a <span data-glyph="id"> where one goes; fillGlyphs swaps
@@ -165,6 +178,40 @@ export class Screens {
     if (this.logoCanvas && this.logoCanvas.isConnected) {
       renderLogoTo(this.logoCanvas, Math.min(this.root.clientWidth - 36, 420), time);
     }
+  }
+
+  /*
+   * In-place updates for screens a redraw would disturb — a half-typed paste,
+   * a camera that is running, a scroll position.
+   */
+
+  /** A handshake screen's status line. */
+  tickStatus(text) {
+    const el = document.getElementById('hs-status');
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  /** A handshake that is taking a while: bring up what to try. */
+  showLater() {
+    const el = document.getElementById('hs-later');
+    if (el) el.hidden = false;
+  }
+
+  /** The lobby's latency figure. */
+  tickLobby(rtt) {
+    const el = document.getElementById('lobby-rtt');
+    if (el) el.textContent = rtt ? `${rtt}ms` : 'linked';
+  }
+
+  /** Back from sending the invite: point at the Paste button. */
+  nudgePaste() {
+    const btn = document.getElementById('clip-paste');
+    if (btn) {
+      btn.classList.remove('nudge');
+      void btn.offsetWidth;
+      btn.classList.add('nudge');
+    }
+    this.toast('Got their reply? Paste it here');
   }
 
   /** The name box, saved as it is left: uppercase, ten characters at most. */
@@ -292,6 +339,15 @@ export class Screens {
       host&rsquo;s camera is already watching for it. That is the whole handshake:
       after that the phones talk straight to each other over the WiFi. No camera?
       Every step can also <b>share</b> or paste the code through any chat app.</p>
+      <h3 style="margin-top:12px">Playing online</h3>
+      <p>Not on the same WiFi? Pick <b>Online</b>: you send an invite through any chat
+      app, your friend taps it and sends back a reply, and you paste that in. Some
+      networks, mobile data especially, can&rsquo;t connect two phones directly &mdash;
+      then try a WiFi or a phone hotspot. Keep a call going alongside to talk while you
+      play; online, the music plays quieter for it.</p>
+      <h3 style="margin-top:12px">If the link drops</h3>
+      <p>Both phones go straight back to connecting, with your picks and the host&rsquo;s
+      settings kept &mdash; one more handshake and you&rsquo;re back in the lobby.</p>
       <h3 style="margin-top:12px">Controls</h3>
       <p>Slide your thumb anywhere to move your paddle. Where the ball hits the paddle
       decides the angle: middle sends it straight, edges send it wide. Moving as you
@@ -498,7 +554,7 @@ export class Screens {
   /* ---------------------------------------------------------------- */
   /* Connect                                                           */
 
-  screenConnect() {
+  screenConnect({ online = false } = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('TWO PLAYERS', { scale: 3 }));
@@ -516,9 +572,31 @@ export class Screens {
       wrap.appendChild(who);
     }
 
+    const tabs = document.createElement('div');
+    tabs.className = 'tabs';
+    tabs.innerHTML = `
+      <button data-action="connect-mode" data-mode="wifi" aria-selected="${!online}">Same WiFi</button>
+      <button data-action="connect-mode" data-mode="online" aria-selected="${online}">Online</button>`;
+    wrap.appendChild(tabs);
+
     const panel = document.createElement('div');
     panel.className = 'panel';
-    panel.innerHTML = `
+    // Online, the codes travel through a chat app: no camera, no shared WiFi.
+    // A call alongside is how the players talk — the game has no voice of
+    // its own — and it keeps its music down for one.
+    panel.innerHTML = online ? `
+      <p>Not on the same WiFi? You swap two codes through any chat app: you send an
+      invite, your friend sends a reply back.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+        <button class="btn" data-action="host">Send an invite</button>
+        <button class="btn secondary" data-action="join">I got an invite</button>
+      </div>
+      <p style="margin-top:12px"><small><b>Tip:</b> keep your usual WhatsApp or FaceTime
+      call going alongside, so you can talk while you play. Online, the game plays its
+      music quieter for it.</small></p>
+      <p style="margin-top:6px"><small>There&rsquo;s no relay server in between, so some
+      networks &mdash; mobile data especially &mdash; can&rsquo;t connect two phones directly.
+      If yours won&rsquo;t, try a WiFi or a phone hotspot.</small></p>` : `
       <p>Both phones need to be on the <b>same WiFi</b>. One hosts, the other joins.</p>
       <p style="margin-top:8px"><small>If one of you is on an <b>iPhone</b>, let the
       Android phone host — the iPhone can then join straight from its Camera app.</small></p>
@@ -538,17 +616,29 @@ export class Screens {
     return wrap;
   }
 
-  /** Shared layout for both sides of the handshake. */
-  signalScreen({ title, step, steps, instruction, code, showCamera, actions, status, asLink }) {
+  /**
+   * Shared layout for both sides of the handshake. Online the code travels
+   * through a chat app, so Share and Copy lead and the QR folds away. After a
+   * drop (`rejoin`) the screen says what happened above it all. `later` is
+   * what to try once the step has taken a while: hidden until then
+   * (showLater), or shown from the start once it has (`slow`). `extra` goes in
+   * below the code.
+   */
+  signalScreen({
+    title, step, steps, instruction, code, showCamera, actions, status, asLink,
+    online, rejoin, later, slow, extra,
+  }) {
     const wrap = document.createElement('div');
     wrap.className = 'screen';
-    wrap.appendChild(pixelLabel(title, { scale: 2 }));
+    wrap.appendChild(pixelLabel(rejoin ? 'RECONNECTING' : title, { scale: 2 }));
 
     const dots = document.createElement('div');
     dots.className = 'steps';
     dots.innerHTML = Array.from({ length: steps }, (_, i) =>
       `<span class="${i <= step ? 'on' : ''}"></span>`).join('');
     wrap.appendChild(dots);
+
+    if (rejoin) wrap.appendChild(this.rejoinPanel(rejoin));
 
     const panel = document.createElement('div');
     panel.className = 'panel';
@@ -565,36 +655,30 @@ export class Screens {
     };
     if (showCamera && showCamera !== 'mini') wrap.appendChild(makeVideo(false));
 
-    if (code) {
-      const box = document.createElement('div');
-      box.className = 'qr-wrap';
-      const canvas = document.createElement('canvas');
-      const size = Math.min(this.root.clientWidth - 70, 320);
-      // The invite goes in as a link so any phone's built-in camera can open
-      // it; the reply stays a bare code, because it is only ever read by the
-      // scanner inside the game and following a link would navigate the host
-      // away from its own live connection.
-      const payload = asLink ? inviteLink(code) : code;
-      let drawn = true;
-      try {
-        drawQrToCanvas(canvas, payload, size, { ecl: asLink ? 'L' : 'M' });
-      } catch {
-        drawn = false;
-      }
-      const hint = document.createElement('div');
-      hint.className = 'qr-hint';
-      if (drawn) {
-        canvas.style.width = size + 'px';
-        canvas.style.height = size + 'px';
-        box.appendChild(canvas);
-        hint.textContent = asLink
-          ? 'Any camera app can read this — including the iPhone Camera'
-          : 'Point the other phone at this';
-      } else {
-        hint.textContent = 'This code is too long for a QR — send it with the button below.';
-      }
-      box.appendChild(hint);
-      wrap.appendChild(box);
+    if (code && online) {
+      // An invite shared as a link opens the game on the friend's phone and
+      // joins by itself; a reply goes back as text, found in whatever
+      // message it arrives in.
+      const send = document.createElement('div');
+      send.className = 'row';
+      send.innerHTML = `
+        ${navigator.share ? `<button class="btn" data-action="share-code" data-share="${asLink ? 'link' : 'text'}">
+          Share ${asLink ? 'invite' : 'reply'}</button>` : ''}
+        <button class="btn ${navigator.share ? 'secondary' : ''}" data-action="copy-code">
+          Copy ${asLink ? 'link' : 'reply'}</button>`;
+      wrap.appendChild(send);
+      const details = document.createElement('details');
+      details.innerHTML = '<summary><small>Show it as a QR code or text</small></summary>';
+      details.appendChild(this.qrBox(code, asLink));
+      const raw = document.createElement('div');
+      raw.className = 'code-box';
+      raw.id = 'rawcode';
+      raw.style.marginTop = '8px';
+      raw.textContent = prettyCode(code);
+      details.appendChild(raw);
+      wrap.appendChild(details);
+    } else if (code) {
+      wrap.appendChild(this.qrBox(code, asLink));
 
       const details = document.createElement('details');
       // navigator.share hands the code to any chat app in one tap; an invite
@@ -614,11 +698,23 @@ export class Screens {
       if (showCamera === 'mini') wrap.appendChild(makeVideo(true));
     }
 
+    if (extra) wrap.appendChild(extra);
+
     if (status) {
       const st = document.createElement('div');
       st.className = 'status';
-      st.innerHTML = `<span class="dot ${status.kind || ''} ${status.pulse ? 'pulse' : ''}"></span>${esc(status.text)}`;
+      st.innerHTML = `<span class="dot ${status.kind || ''} ${status.pulse ? 'pulse' : ''}"></span>`
+        + `<span id="hs-status">${esc(status.text)}</span>`;
       wrap.appendChild(st);
+    }
+
+    if (later) {
+      const box = document.createElement('div');
+      box.id = 'hs-later';
+      box.className = 'panel tight notice';
+      box.hidden = !slow;
+      box.innerHTML = later;
+      wrap.appendChild(box);
     }
 
     const row = document.createElement('div');
@@ -630,31 +726,112 @@ export class Screens {
     return wrap;
   }
 
+  /** A handshake code as a QR, or word that it is too long for one. */
+  qrBox(code, asLink) {
+    const box = document.createElement('div');
+    box.className = 'qr-wrap';
+    const canvas = document.createElement('canvas');
+    const size = Math.min(this.root.clientWidth - 70, 320);
+    // The invite goes in as a link so any phone's built-in camera can open
+    // it; the reply stays a bare code, because it is only ever read by the
+    // scanner inside the game and following a link would navigate the host
+    // away from its own live connection.
+    const payload = asLink ? inviteLink(code) : code;
+    let drawn = true;
+    try {
+      drawQrToCanvas(canvas, payload, size, { ecl: asLink ? 'L' : 'M' });
+    } catch {
+      drawn = false;
+    }
+    const hint = document.createElement('div');
+    hint.className = 'qr-hint';
+    if (drawn) {
+      canvas.style.width = size + 'px';
+      canvas.style.height = size + 'px';
+      box.appendChild(canvas);
+      hint.textContent = asLink
+        ? 'Any camera app can read this — including the iPhone Camera'
+        : 'Point the other phone at this';
+    } else {
+      hint.textContent = 'This code is too long for a QR — send it with the button below.';
+    }
+    box.appendChild(hint);
+    return box;
+  }
+
+  /**
+   * Back in the handshake after a drop: what happened, and that the lobby
+   * waits as it was. The whole story — the Link Lost screen's facts and the
+   * diagnostics button — folds away under it.
+   */
+  rejoinPanel({ name, drop }) {
+    const panel = document.createElement('div');
+    panel.className = 'panel tight notice';
+    const facts = drop?.facts || [];
+    panel.innerHTML = `
+      <h3 class="warn">Link dropped</h3>
+      <p style="margin-top:4px">${esc(drop?.text || 'The connection dropped.')} Connect again to pick up
+        where you left off${name ? ` with ${esc(name)}` : ''} &mdash; your picks, the stage and the rules
+        are kept.</p>
+      <details style="margin-top:6px">
+        <summary><small>What happened</small></summary>
+        ${facts.length ? `<table style="margin-top:6px"><tbody>${facts.map(([k, v]) => `
+          <tr><td class="muted">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${drop?.hint ? `<p style="margin-top:6px"><small>${esc(drop.hint)}</small></p>` : ''}
+        <button class="textbtn" data-action="copy-diag">Copy diagnostics</button>
+      </details>`;
+    return panel;
+  }
+
+  /** A handshake screen's way out: back to the connect screen, or — reconnecting — to the title. */
+  cancelButton(rejoin) {
+    return rejoin
+      ? '<button class="btn secondary" data-action="leave">Leave</button>'
+      : '<button class="btn secondary" data-action="cancel">Cancel</button>';
+  }
+
   screenHost(data) {
+    const { online, rejoin, slow } = data;
+    const common = { online, rejoin, slow, steps: 3 };
     if (data.stage === 'making') {
       return this.signalScreen({
-        title: 'HOSTING',
-        step: 0, steps: 3,
-        instruction: 'Working out how this phone can be reached on the WiFi&hellip;',
+        ...common,
+        title: online ? 'ONLINE INVITE' : 'HOSTING',
+        step: 0,
+        instruction: online
+          ? 'Asking the internet where this phone can be reached&hellip;'
+          : 'Working out how this phone can be reached on the WiFi&hellip;',
         status: { text: 'Preparing invite', kind: 'warn', pulse: true },
-        actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
+        actions: this.cancelButton(rejoin),
       });
     }
     if (data.stage === 'waiting') {
       return this.signalScreen({
-        title: 'HOSTING',
-        step: 2, steps: 3,
-        instruction: 'Got the reply. Shaking hands over the WiFi&hellip;',
+        ...common,
+        title: online ? 'ONLINE INVITE' : 'HOSTING',
+        step: 2,
+        instruction: online
+          ? 'Got the reply. Finding a way through to your friend&rsquo;s phone&hellip;'
+          : 'Got the reply. Shaking hands over the WiFi&hellip;',
         status: { text: 'Connecting', kind: 'warn', pulse: true },
-        actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
+        later: `<p><small>${online
+          ? 'This is taking a while. Some networks &mdash; mobile data especially &mdash; can&rsquo;t '
+            + 'connect two phones directly. If it doesn&rsquo;t work, try with one of you on a WiFi '
+            + 'or a phone hotspot.'
+          : 'This is taking a while. Both phones need to be on the same WiFi, and some guest '
+            + 'networks block phones from each other &mdash; a personal hotspot gets around that.'}</small></p>
+          <button class="btn small secondary" style="margin-top:8px" data-action="retry">Try again</button>`,
+        actions: this.cancelButton(rejoin),
       });
     }
+    if (online) return this.onlineInvite(data);
     // The camera runs while the invite is on screen: the moment the friend's
     // reply code exists, pointing this phone at it is the whole remaining job.
     const scanning = scannerSupported();
     return this.signalScreen({
+      ...common,
       title: 'HOSTING',
-      step: 0, steps: 3,
+      step: 0,
       instruction: 'Show this to your friend. <b>On an iPhone</b> they just open the '
         + 'Camera app, point it here and tap the banner. On Android they tap '
         + '<b>Join</b> in the game. '
@@ -670,7 +847,35 @@ export class Screens {
       actions: `
         <button class="btn ${scanning ? 'secondary' : ''}" data-action="paste-answer">
           ${scanning ? 'Paste the reply instead' : 'Enter their reply'}</button>
-        <button class="btn secondary" data-action="cancel">Cancel</button>`,
+        ${this.cancelButton(rejoin)}`,
+    });
+  }
+
+  /**
+   * The online invite: send it, then paste the reply that comes back — both
+   * on one screen, since the host spends the time in between in a chat app.
+   * Coming back to the game points at the Paste button (App.offerPaste).
+   */
+  onlineInvite({ code, rejoin, slow }) {
+    const paste = document.createElement('div');
+    paste.className = 'panel tight';
+    paste.innerHTML = '<p style="margin-bottom:8px"><b>Got their reply?</b> Paste it here &mdash; the whole message is fine.</p>';
+    paste.appendChild(this.pasteArea('use-answer', { label: 'Paste their reply', primary: true }));
+    return this.signalScreen({
+      online: true, rejoin, slow,
+      title: 'ONLINE INVITE',
+      step: 0, steps: 3,
+      instruction: '<b>1.</b> Send this invite to your friend &mdash; tap <b>Share invite</b> and pick '
+        + 'your chat. <b>2.</b> They tap it, and their game makes a reply for them to send back. '
+        + '<b>3.</b> Paste the reply below as soon as it arrives, and you&rsquo;re connected.',
+      code,
+      asLink: true,
+      extra: paste,
+      status: { text: 'Waiting for their reply', kind: 'warn', pulse: true },
+      later: `<p><small>This invite has been waiting a while, and an old one may no longer reach
+          this phone. If your friend hasn&rsquo;t opened it yet, send them a fresh one.</small></p>
+        <button class="btn small secondary" style="margin-top:8px" data-action="retry">New invite</button>`,
+      actions: this.cancelButton(rejoin),
     });
   }
 
@@ -680,7 +885,10 @@ export class Screens {
    * even the long-press when the browser allows reading it. Handshake codes
    * unless `found` says what else to look for.
    */
-  pasteArea(action, { found = (text) => CODE_RE.test(extractCode(text)), placeholder = 'RGP…' } = {}) {
+  pasteArea(action, {
+    found = (text) => CODE_RE.test(extractCode(text)), placeholder = 'RGP…',
+    label = 'Paste from clipboard', primary = false,
+  } = {}) {
     const box = document.createElement('div');
     box.style.display = 'flex';
     box.style.flexDirection = 'column';
@@ -697,69 +905,100 @@ export class Screens {
     box.appendChild(ta);
     if (navigator.clipboard?.readText) {
       const btn = document.createElement('button');
-      btn.className = 'btn small secondary';
+      btn.id = 'clip-paste';
+      btn.className = primary ? 'btn' : 'btn small secondary';
       btn.dataset.action = 'clip-paste';
       btn.dataset.next = action;
-      btn.textContent = 'Paste from clipboard';
+      btn.textContent = label;
       box.appendChild(btn);
     }
     return box;
   }
 
   screenJoin(data) {
+    const { online, rejoin, slow } = data;
+    const common = { online, rejoin, slow, steps: 3 };
     if (data.stage === 'making') {
       return this.signalScreen({
+        ...common,
         title: 'JOINING',
-        step: 1, steps: 3,
+        step: 1,
         instruction: 'Code read. Writing your reply&hellip;',
         status: { text: 'Preparing reply', kind: 'warn', pulse: true },
-        actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
+        actions: this.cancelButton(rejoin),
       });
     }
     if (data.stage === 'reply') {
+      // An online invite says when it was made. One that has sat around may
+      // no longer reach the phone that made it, which is worth saying before
+      // anyone waits on it.
+      const age = data.inviteAt != null ? Date.now() - data.inviteAt : 0;
+      const stale = age > STALE_INVITE
+        ? `<small class="warn" style="display:block;margin-top:8px">This invite was made
+          ${madeAgo(age)}. If you don&rsquo;t connect, ask for a fresh one.</small>`
+        : '';
       return this.signalScreen({
+        ...common,
         title: 'YOUR REPLY',
-        step: 1, steps: 3,
-        instruction: 'Now show <b>this</b> code to the host — their camera is already '
-          + 'looking for it. If they can&rsquo;t scan, send it to them instead.',
+        step: 1,
+        instruction: (online
+          ? 'Now send this reply back to your friend straight away &mdash; tap <b>Share reply</b> and '
+            + 'pick your chat. Their game connects the moment they paste it.'
+          : 'Now show <b>this</b> code to the host — their camera is already '
+            + 'looking for it. If they can&rsquo;t scan, send it to them instead.') + stale,
         code: data.code,
-        status: { text: 'Waiting for the host', kind: 'warn', pulse: true },
-        actions: '<button class="btn secondary" data-action="cancel">Cancel</button>',
+        status: {
+          text: online ? 'Waiting for them to paste it' : 'Waiting for the host', kind: 'warn', pulse: true,
+        },
+        later: `<p><small>${online
+          ? 'Still nothing? Check your friend got the reply &mdash; it works best pasted straight '
+            + 'away. If their game says it couldn&rsquo;t connect, ask them for a fresh invite and '
+            + 'start again.'
+          : 'Taking a while? Make sure the host scanned this reply &mdash; their camera watches '
+            + 'for it while their invite is on screen &mdash; or start again from their invite.'}</small></p>
+          <button class="btn small secondary" style="margin-top:8px" data-action="retry">Start again</button>`,
+        actions: this.cancelButton(rejoin),
       });
     }
     if (data.stage === 'paste') {
       // An invite the Camera app reads opens in the browser, which keeps its
       // own name, history and offline copy apart from a home-screen install.
       const iosNote = isIOS()
-        ? '<small style="display:block;margin-top:8px">On iPhone, invites scanned with the Camera app '
-          + 'open in Safari (or your default browser), not in the home-screen app.</small>'
+        ? `<small style="display:block;margin-top:8px">On iPhone, invites ${online ? 'you tap' : 'scanned with the Camera app'}
+          open in Safari (or your default browser), not in the home-screen app.</small>`
         : '';
       const wrap = this.signalScreen({
-        title: 'PASTE CODE',
-        step: 0, steps: 3,
-        instruction: 'Paste the code your friend sent you — it connects as soon as it lands.' + iosNote,
+        ...common,
+        title: online ? 'ONLINE INVITE' : 'PASTE CODE',
+        step: 0,
+        instruction: (online
+          ? 'Paste the invite your friend sent &mdash; the whole message is fine. (Tapping the '
+            + 'invite in your chat does this for you.)'
+          : 'Paste the code your friend sent you — it connects as soon as it lands.') + iosNote,
         actions: `
           <button class="btn" data-action="use-pasted">Connect</button>
-          <button class="btn secondary" data-action="cancel">Cancel</button>`,
+          ${this.cancelButton(rejoin)}`,
       });
       wrap.insertBefore(this.pasteArea('use-pasted'), wrap.lastChild);
       return wrap;
     }
     return this.signalScreen({
+      ...common,
       title: 'JOINING',
-      step: 0, steps: 3,
+      step: 0,
       instruction: 'Point your camera at the code on the host&rsquo;s phone.',
       showCamera: true,
       status: { text: 'Looking for a code', kind: 'warn', pulse: true },
       actions: `
         <button class="btn secondary" data-action="join-paste">Paste it instead</button>
-        <button class="btn secondary" data-action="cancel">Cancel</button>`,
+        ${this.cancelButton(rejoin)}`,
     });
   }
 
   /** Shown when the host has to type in a reply by hand. */
-  screenPasteAnswer() {
+  screenPasteAnswer({ rejoin } = {}) {
     const wrap = this.signalScreen({
+      rejoin,
       title: 'PASTE REPLY',
       step: 1, steps: 3,
       instruction: 'Paste the reply code from your friend&rsquo;s phone.',
@@ -801,7 +1040,7 @@ export class Screens {
   screenLobby(data) {
     const {
       isHost, myChar, theirChar, theirName, theirReady, theirAway, myReady, myFlair, flairProgress,
-      stage, crates, target, party, rtt, protocol, theirProtocol,
+      stage, crates, target, party, rtt, laggy, online, protocol, theirProtocol,
     } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
@@ -814,11 +1053,22 @@ export class Screens {
     versus.innerHTML = `
       <div class="status" style="justify-content:space-between">
         <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}</span>
-        <span class="muted">${rtt ? rtt + 'ms' : 'linked'}</span>
+        <span class="${laggy ? 'warn' : 'muted'}" id="lobby-rtt">${rtt ? rtt + 'ms' : 'linked'}</span>
         <span>${esc(theirName || 'FRIEND')}${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
           class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
       </div>`;
     wrap.appendChild(versus);
+
+    // Online, a round trip of a tenth of a second or more is ordinary. The
+    // game makes up for it, but a rally still runs a touch behind.
+    if (laggy) {
+      const note = document.createElement('div');
+      note.className = 'panel tight notice';
+      note.innerHTML = `<h3 class="warn">Laggy connection</h3>
+        <p style="margin-top:4px">The game makes up for the delay, but fast rallies can still feel a
+        step behind. ${online ? 'A WiFi usually beats mobile data.' : 'Moving closer to the WiFi router can help.'}</p>`;
+      wrap.appendChild(note);
+    }
 
     // A phone on an older cached build — loaded on a WiFi with no internet —
     // still plays, but can't show everything a newer one can. Say which phone
@@ -1083,10 +1333,11 @@ export class Screens {
    * enough to tell a WiFi problem from a paused phone at a glance, and the
    * Copy diagnostics button carries the rest to a bug report. A match called
    * off because a phone stayed away too long comes here too, under its own
-   * title.
+   * title, and so does a handshake that never connected (Couldn't connect),
+   * with a Try again. `next` picks the way on: 'retry' or 'rejoin'.
    */
   screenLost(data) {
-    const { title = 'LINK LOST', text, facts = [], hint } = data;
+    const { title = 'LINK LOST', text, facts = [], hint, next } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel(title, { scale: 3, color: '#ff4d3d' }));
@@ -1103,7 +1354,11 @@ export class Screens {
     actions.style.flexDirection = 'column';
     actions.style.gap = '10px';
     actions.innerHTML = `
-      <button class="btn" data-action="title">Back to title</button>
+      ${next === 'retry' ? `
+        <button class="btn" data-action="retry">Try again</button>
+        <button class="btn secondary" data-action="cancel">Back</button>` : `
+        <button class="btn" data-action="title">Back to title</button>
+        ${next === 'rejoin' ? '<button class="btn secondary" data-action="rejoin">Reconnect</button>' : ''}`}
       <button class="btn secondary" data-action="copy-diag">Copy diagnostics</button>`;
     wrap.appendChild(actions);
     return wrap;

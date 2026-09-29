@@ -5,7 +5,7 @@
 // sends its paddle position, renders what it is told, and predicts only its
 // own paddle so the controls never feel rubbery.
 
-import { Screens, EMOTES, QUICK_CHAT_FROM } from './ui/screens.js';
+import { Screens, EMOTES, QUICK_CHAT_FROM, STALE_INVITE, madeAgo } from './ui/screens.js';
 import { Renderer } from './game/render.js';
 import { Input } from './game/input.js';
 import { Fx, reactTo } from './game/fx.js';
@@ -15,7 +15,7 @@ import { byId as charById, BALANCE } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
 import { itemById } from './game/items.js';
 import { Peer } from './net/peer.js';
-import { extractCode, inviteLink, CODE_RE } from './net/sdp.js';
+import { extractCode, inviteLink, unpackSignal, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
@@ -59,8 +59,29 @@ const AWAY_LIMIT = 30000;
 // How far back predictPaddle remembers where our own paddle has been. Sized to
 // cover the whole staleness of the echoed paddle position with room to spare:
 // input send interval + RTT + host frame (and its up-to-6-step backlog) +
-// snapshot interval + a 30 Hz low-power-mode guest frame is ~0.25 s at worst.
+// snapshot interval + a 30 Hz low-power-mode guest frame is ~0.25 s at worst
+// on a WiFi. Online the round trip alone can be most of that, so the memory
+// grows with it (predictMemory).
 const PREDICT_MEMORY = 0.45;
+// The lag fixes (DESIGN.md §5) work in half round trips: the guest draws the
+// ball that far ahead, and the host gives the guest's saves that much grace.
+// Capped, past which they would make the ball jump about more than they help.
+const LAG_CAP = 0.1;
+// The lobby calls the link laggy above this smoothed round trip, and stops
+// below the second, so a link hovering on the line doesn't flicker the note.
+const LAGGY_MS = 120;
+const LAGGY_CLEAR_MS = 100;
+// A handshake that has sent its reply and is connecting: after `slow` ms it
+// says what to try, after `limit` it gives up with Couldn't connect rather
+// than pulse forever. Online both run longer — a route through two home
+// routers takes some finding.
+const CONNECT_TIMES = {
+  wifi: { slow: 12000, limit: 35000 },
+  online: { slow: 25000, limit: 60000 },
+};
+// A guest waiting for the host to take its reply gets a hint after this long.
+// It sets no limit of its own: online, a friend may take minutes to paste it.
+const REPLY_SLOW = { wifi: 45000, online: 150000 };
 
 // Where a drop happened, as the Link Lost screen says it.
 const STEP_LABEL = {
@@ -72,6 +93,10 @@ const STEP_LABEL = {
 };
 const WIFI_HINT = 'Both phones need to stay on the same WiFi. Some guest networks block '
   + 'phones from talking to each other — a personal hotspot works around that.';
+const ONLINE_HINT = 'Some networks — mobile data especially — can\'t connect two phones directly, '
+  + 'and there is no relay server in between to fall back on. Try again with one of you on a '
+  + 'WiFi or a phone hotspot, and swap the codes promptly: the longer a reply waits to be '
+  + 'pasted, the less likely it gets through.';
 const AWAY_HINT = 'Switching apps or letting the screen lock pauses the game, and the other '
   + 'phone gives up if it stays away too long — 30 seconds, when both games are up to date. '
   + 'Keep RoGuPong on screen on both phones while you play.';
@@ -80,6 +105,12 @@ const CALLED_OFF_HINT = 'A match waits 30 seconds for a phone that leaves the sc
   + 'on both phones while you play.';
 
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
+/** A wait on a handshake screen: "42 s", then "3:05". */
+function waited(ms) {
+  const s = Math.floor(ms / 1000);
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
 
 /** A phone's last trip off the screen, as the Link Lost screen tells it. */
 function awayText(hiddenAt, last, now, theirs) {
@@ -103,6 +134,12 @@ class App {
 
     this.mode = 'menu';           // menu | match
     this.peer = null;
+    this.online = false;          // playing over the internet rather than a shared WiFi
+    this.role = null;             // 'host' | 'guest': this phone's side, kept past a drop
+    this.hs = null;               // the handshake under way: { stage, at, slow }
+    this.handshakeSeq = 0;        // bumped whenever a handshake is abandoned mid-flight
+    this.rejoin = null;           // back in the handshake after a drop: { name, drop }
+    this.laggy = false;           // the lobby's laggy-connection note is up
     this.scanner = null;
     this.match = null;
     this.stage = STAGES[0];
@@ -258,6 +295,7 @@ class App {
     audio.playMusic(this.mode === 'match' ? 'match' : 'menu');
     if (this.wantAwake) this.keepAwake(true);
     this.peer?.backOnScreen();
+    this.offerPaste();
     if (this.missedEmote) {
       const { i, theirs } = this.missedEmote;
       this.missedEmote = null;
@@ -414,6 +452,7 @@ class App {
     this.fx.update(dt);
     this.renderer.drawMenuBackdrop(this.stage, this.menuTime, this.fx);
     this.screens.tickLogo(this.menuTime);
+    this.watchHandshake();
   }
 
   stepMatch(dt) {
@@ -424,6 +463,9 @@ class App {
     if (isHost) {
       m.setInput(0, { x: this.input.x, special: this.input.takeSpecial() });
       m.setInput(1, { x: this.guestInput.x });
+      // The guest's paddle reaches us half a round trip late, so its saves
+      // get that much grace.
+      m.grace[1] = this.peer ? this.halfTrip() : 0;
 
       // Fixed-step accumulator. Feeding a long frame straight into step() would
       // have it clamped, quietly turning a slow phone into a slow-motion game.
@@ -520,13 +562,14 @@ class App {
     // genuine desync — a lost input burst, a clamp mismatch — eased away
     // gently, or snapped when it is too big to ease.
     const log = this.predictLog;
+    const memory = this.predictMemory();
     log.push({ t: this.menuTime, x: this.predictX });
-    while (log.length && log[0].t < this.menuTime - PREDICT_MEMORY) log.shift();
+    while (log.length && log[0].t < this.menuTime - memory) log.shift();
 
     // No fresh authority, no correction: during a snapshot stall the echo is
     // frozen, and on the host (which never applies snapshots) the simulation
     // chases the same finger this does — either way there is nothing to learn.
-    if (this.menuTime - this.lastSnapAt > PREDICT_MEMORY) return;
+    if (this.menuTime - this.lastSnapAt > memory) return;
 
     let lo = this.predictX, hi = this.predictX;
     for (const h of log) { if (h.x < lo) lo = h.x; else if (h.x > hi) hi = h.x; }
@@ -534,6 +577,20 @@ class App {
     const err = server < lo ? server - lo : server > hi ? server - hi : 0;
     if (Math.abs(err) > 0.14) this.predictX = server;
     else if (err) this.predictX += err * Math.min(1, dt * 2.5);
+  }
+
+  /**
+   * How far back predictPaddle's memory reaches: the echo is a round trip
+   * stale plus the send intervals and frames around it, so a slow link needs
+   * a longer memory or ordinary lag starts reading as desync.
+   */
+  predictMemory() {
+    return Math.max(PREDICT_MEMORY, (this.peer?.rttAvg || 0) / 1000 + 0.2);
+  }
+
+  /** Half the smoothed round trip, in seconds: how late the guest sees the court. */
+  halfTrip() {
+    return Math.min(LAG_CAP, (this.peer?.rttAvg || 0) / 2000);
   }
 
   /** The match's opening countdown, and a paused match's counting back in. */
@@ -792,9 +849,12 @@ class App {
     this.theirHiddenAt = null;
     this.theirLastAway = null;
     this.missedEmote = null;
+    this.laggy = false;
     peer.patience = () => this.linkPatience();
     this.keepAwake(true);
-    log(`${peer.isHost ? 'hosting' : 'joining'}: code ready`);
+    audio.setDucked(peer.online);
+    log(`${peer.isHost ? 'hosting' : 'joining'}${peer.online ? ' online' : ''}: code ready`);
+    peer.on('rtt', () => this.onRtt());
     peer.on('stall', () => {
       log('link: stalled, waiting for it to come back');
       // A friend who left the screen takes their end of the link with them
@@ -810,7 +870,9 @@ class App {
     peer.on('open', () => {
       this.stopScanner();
       audio.blip(880, 0.1);
-      this.screens.toast('Connected', 'good');
+      this.screens.toast(this.rejoin ? 'Reconnected' : 'Connected', 'good');
+      this.hs = null;
+      this.rejoin = null;
       this.theirProtocol = null;
       this.histIn = null;
       const history = lb.allMatches();
@@ -901,6 +963,8 @@ class App {
       target: this.target,
       party: this.party,
       rtt: this.peer?.rtt || 0,
+      laggy: this.laggy,
+      online: this.online,
       protocol: PROTOCOL,
       theirProtocol: this.theirProtocol,
     };
@@ -908,6 +972,22 @@ class App {
 
   refreshLobby() {
     if (this.screens.current === 'lobby') this.screens.update(this.lobbyData());
+  }
+
+  /**
+   * A heartbeat came back. The lobby's latency figure follows it in place,
+   * and its laggy-connection note comes and goes with the smoothed figure.
+   */
+  onRtt() {
+    const avg = this.peer?.rttAvg || 0;
+    const laggy = avg > (this.laggy ? LAGGY_CLEAR_MS : LAGGY_MS);
+    if (laggy !== this.laggy) {
+      this.laggy = laggy;
+      log(`link: ${laggy ? 'laggy' : 'no longer laggy'} at ${Math.round(avg)} ms`);
+      this.refreshLobby();
+    } else if (this.screens.current === 'lobby') {
+      this.screens.tickLobby(this.peer.rtt);
+    }
   }
 
   /** Merge the history that streamed in: all of it, or after a drop whatever made it across. */
@@ -1034,7 +1114,8 @@ class App {
       // would set a held court moving again.
       if (this.theirHiddenAt != null && this.canPause()) return;
       const m = this.match;
-      if (!m.applySnapshot(msg)) return;
+      // Half a round trip old by now: the balls are drawn that far ahead.
+      if (!m.applySnapshot(msg, this.halfTrip())) return;
       this.lastSnapAt = this.menuTime;
       // Paused with both phones on screen: the host has yet to hear that this
       // one is back. Keep counting in rather than flicker back to a pause.
@@ -1044,8 +1125,14 @@ class App {
 
   /**
    * reason: 'bye'; 'away' or 'away-self' for a match called off because the
-   * other phone or this one stayed away too long; or the peer's 'timeout' |
-   * 'disconnected' | 'failed' | 'closed'.
+   * other phone or this one stayed away too long; 'timeout' for a handshake
+   * that never connected; or the peer's 'timeout' | 'disconnected' |
+   * 'failed' | 'closed'.
+   *
+   * A handshake that never connected ends on Couldn't connect, with a Try
+   * again. A link that was up and went down unasked goes straight back into
+   * the handshake (beginRejoin); one the friend ended, or a match called off,
+   * lands on Link Lost with a Reconnect button.
    */
   onDrop(reason) {
     const drop = this.describeDrop(reason);
@@ -1057,15 +1144,21 @@ class App {
     audio.playMusic('menu');
     this.keepAwake(false);
     this.match = null;
+    this.hs = null;
+    this.handshakeSeq++;
     if (this.peer) { this.peer.close(); this.peer = null; }
-    this.go('lost', drop);
+    audio.setDucked(false);
+    if (drop.auto) this.beginRejoin();
+    else this.go('lost', drop);
   }
 
   /**
    * What the Link Lost screen and the diagnostics say about a drop, taken
    * before the connection is torn down: why, at which step, how long the line
    * had been quiet, and whether either phone had left the screen — which is
-   * what tells a WiFi problem from a phone that was paused.
+   * what tells a WiFi problem from a phone that was paused. `next` is the way
+   * on the screen offers: 'retry' a handshake that never connected, or
+   * 'rejoin' a friend who was connected; `auto` takes that way at once.
    */
   describeDrop(reason) {
     const now = performance.now();
@@ -1076,16 +1169,28 @@ class App {
     const Who = this.theirName || 'Your friend';
     const quiet = opened ? now - p.lastSeen : 0;
     const limit = AWAY_LIMIT / 1000;
-    const text = {
-      bye: `${Who} left.`,
-      away: `${Who} left the game for over ${limit} seconds, so the match was called off.`,
-      'away-self': `You left the game for over ${limit} seconds, so the match was called off.`,
-      timeout: `Nothing came through from ${who}'s phone for ${Math.round(quiet / 1000)} seconds.`,
-      disconnected: `The link to ${who}'s phone went down and didn't come back.`,
-      failed: opened ? `The link to ${who}'s phone failed.` : 'The two phones couldn\'t reach each other.',
-      closed: `${Who}'s phone closed the connection.`,
-    }[reason] || 'The connection dropped.';
     const calledOff = reason === 'away' || reason === 'away-self';
+
+    let text;
+    if (!opened) {
+      // The friend's name only arrives once connected, so no names here.
+      const host = p ? p.isHost : this.role === 'host';
+      text = this.online
+        ? (host ? 'Couldn\'t connect over the internet.'
+          : 'Couldn\'t connect over the internet — or the host never got your reply.')
+        : (host ? 'The two phones couldn\'t reach each other.'
+          : 'The connection never came up. Did the host scan your reply?');
+    } else {
+      text = {
+        bye: `${Who} left.`,
+        away: `${Who} left the game for over ${limit} seconds, so the match was called off.`,
+        'away-self': `You left the game for over ${limit} seconds, so the match was called off.`,
+        timeout: `Nothing came through from ${who}'s phone for ${Math.round(quiet / 1000)} seconds.`,
+        disconnected: `The link to ${who}'s phone went down and didn't come back.`,
+        failed: `The link to ${who}'s phone failed.`,
+        closed: `${Who}'s phone closed the connection.`,
+      }[reason] || 'The connection dropped.';
+    }
 
     const facts = [['When', STEP_LABEL[step] || 'In the menus']];
     if (opened) {
@@ -1097,29 +1202,66 @@ class App {
     } else if (p) {
       facts.push(['Trying for', secs(now - p.createdAt)]);
     }
+    facts.push(['Playing', this.online ? 'Online' : 'On the same WiFi']);
 
     const leftScreen = this.hiddenAt != null || this.theirHiddenAt != null
       || (this.lastAway && now - this.lastAway.back < 30000)
       || (this.theirLastAway && now - this.theirLastAway.back < 30000);
+    const netHint = this.online ? ONLINE_HINT : WIFI_HINT;
     const hint = reason === 'bye' ? null : calledOff ? CALLED_OFF_HINT
-      : opened && leftScreen ? AWAY_HINT : WIFI_HINT;
+      : opened && leftScreen ? AWAY_HINT : netHint;
 
     return {
       reason, step, text, facts, hint, wall: Date.now(),
-      title: calledOff ? 'CALLED OFF' : 'LINK LOST',
+      title: calledOff ? 'CALLED OFF' : opened ? 'LINK LOST' : 'COULDN\'T CONNECT',
+      next: opened ? 'rejoin' : 'retry',
+      auto: opened && reason !== 'bye' && !calledOff,
       link: p ? this.linkSummary(p, now) : 'none',
     };
+  }
+
+  /**
+   * Straight back into the handshake after a drop, on the same side — the
+   * host making a fresh invite, the guest ready to take it — with the stage,
+   * the rules and both picks as they were, so picking up where they left off
+   * takes one scan on each phone rather than the trip through the menus. The
+   * screens say what happened, and Leave gives up.
+   */
+  beginRejoin() {
+    this.rejoin = { name: this.theirName, drop: this.lastDrop };
+    log(`reconnecting as ${this.role}`);
+    this.retryHandshake();
+  }
+
+  /** Start this phone's side of the handshake over. */
+  retryHandshake() {
+    if (this.role === 'host') this.beginHost();
+    else this.openJoin();
+  }
+
+  /** Couldn't connect, for an online invite that found no internet address to put in it. */
+  noInternet() {
+    const drop = {
+      reason: 'no-internet', step: 'handshake', wall: Date.now(), next: 'retry', link: 'none',
+      title: 'NO INTERNET',
+      text: 'This phone couldn\'t find its address on the internet, so there was nothing to put in an invite.',
+      facts: [['When', 'Making an online invite']],
+      hint: 'Check this phone is online — a WiFi with no internet behind it won\'t do — and try again. '
+        + 'On the same WiFi as your friend? Pick Same WiFi instead: it needs no internet at all.',
+    };
+    this.lastDrop = drop;
+    return drop;
   }
 
   /** The connection in one line, for diagnostics. */
   linkSummary(p, now = performance.now()) {
     const age = p.openedAt ? `open ${secs(now - p.openedAt)}` : `connecting ${secs(now - p.createdAt)}`;
     return [
-      p.isHost ? 'host' : 'guest',
+      `${p.isHost ? 'host' : 'guest'}${p.online ? ' online' : ''}`,
       `${p.pc.connectionState} (ice ${p.pc.iceConnectionState})`,
       age,
       p.openedAt ? `last heard ${secs(now - p.lastSeen)} ago` : null,
-      p.rtt ? `rtt ${p.rtt} ms` : null,
+      p.rtt ? `rtt ${p.rtt} ms (avg ${Math.round(p.rttAvg)})` : null,
       p.openedAt ? `their protocol ${this.theirProtocol ?? '?'}` : null,
       p.candidates(),
     ].filter(Boolean).join(' · ');
@@ -1198,53 +1340,174 @@ class App {
   /* ------------------------------------------------------------------ */
   /* Signalling                                                          */
 
+  /** What every handshake screen is told besides its stage. */
+  signalData(data) {
+    return { ...data, online: this.online, rejoin: this.rejoin, slow: !!this.hs?.slow };
+  }
+
   async beginHost() {
-    this.go('host', { stage: 'making' });
-    this.screens.toast('Preparing invite…');
+    const ticket = ++this.handshakeSeq;
+    this.role = 'host';
+    this.hs = null;
+    this.go('host', this.signalData({ stage: 'making' }));
+    this.screens.toast(this.online ? 'Preparing online invite…' : 'Preparing invite…');
     try {
-      const peer = await Peer.host();
+      const peer = await Peer.host({ online: this.online });
+      // Cancelled while the invite was being made.
+      if (ticket !== this.handshakeSeq) { peer.close(); return; }
       this.attachPeer(peer);
+      this.hs = { stage: 'invite', at: performance.now() };
       this.showHostCode();
     } catch (err) {
+      if (ticket !== this.handshakeSeq) return;
+      if (err.code === 'no-internet') {
+        this.go('lost', this.noInternet());
+        return;
+      }
       this.screens.toast('Could not start: ' + err.message, 'bad');
-      this.go('connect');
+      this.go('connect', { online: this.online });
     }
   }
 
   /**
    * The invite screen doubles as the reply scanner: the camera runs while the
    * code is showing, so once the guest holds up their reply the host only has
-   * to point the phone at it — no extra tap in between.
+   * to point the phone at it — no extra tap in between. Online there is no
+   * one to point it at; the reply comes back through a chat app, and the
+   * invite screen has the box to paste it into.
    */
   showHostCode() {
-    this.go('host', { stage: 'code', code: this.peer?.code });
-    if (scannerSupported()) {
+    this.go('host', this.signalData({ stage: 'code', code: this.peer?.code }));
+    if (!this.online && scannerSupported()) {
       requestAnimationFrame(() => this.startScanner((code) => this.acceptAnswer(code)));
     }
   }
 
+  /** The guest's first step: the camera on the host's invite, or a box to paste it into. */
+  openJoin() {
+    this.role = 'guest';
+    this.hs = null;
+    if (!this.online && scannerSupported()) {
+      this.go('join', this.signalData({ stage: 'scan' }));
+      requestAnimationFrame(() => this.startScanner((code) => this.beginJoin(code)));
+    } else {
+      this.go('join', this.signalData({ stage: 'paste' }));
+    }
+  }
+
   async beginJoin(offerCode) {
-    this.go('join', { stage: 'making' });
+    const ticket = ++this.handshakeSeq;
+    this.role = 'guest';
+    this.hs = null;
+    this.go('join', this.signalData({ stage: 'making' }));
     try {
       const peer = await Peer.join(offerCode);
+      if (ticket !== this.handshakeSeq) { peer.close(); return; }
+      // The invite says where the players are: one made for online play makes
+      // this an online game, whichever way this phone came to it.
+      this.online = peer.online;
       this.attachPeer(peer);
-      this.go('join', { stage: 'reply', code: peer.code });
+      this.hs = { stage: 'reply', at: performance.now() };
+      if (peer.inviteAt != null) log(`invite made ${madeAgo(Date.now() - peer.inviteAt)}`);
+      this.go('join', this.signalData({ stage: 'reply', code: peer.code, inviteAt: peer.inviteAt }));
     } catch (err) {
+      if (ticket !== this.handshakeSeq) return;
       this.screens.toast('Bad code: ' + err.message, 'bad');
-      this.go('join', { stage: 'scan' });
-      this.startScanner((code) => this.beginJoin(code));
+      this.openJoin();
     }
   }
 
   async acceptAnswer(code) {
+    const peer = this.peer;
+    if (!peer || peer.connected) return;
+    // Easily done online: copy the invite link to send, then paste it back.
+    if (extractCode(code) === peer.code) {
+      this.screens.toast('That\'s your own invite — paste your friend\'s reply', 'bad');
+      return;
+    }
     try {
-      await this.peer.acceptAnswer(code);
+      await peer.acceptAnswer(code);
+      if (peer !== this.peer || peer.connected) return;
       this.stopScanner();
-      this.go('host', { stage: 'waiting' });
+      this.hs = { stage: 'connecting', at: performance.now() };
+      this.go('host', this.signalData({ stage: 'waiting' }));
     } catch (err) {
+      if (peer !== this.peer) return;
       this.screens.toast('Reply rejected: ' + err.message, 'bad');
       this.showHostCode();
     }
+  }
+
+  /**
+   * Each menu frame of a handshake: keep its status line current, say what
+   * to try once it has taken a while, and give up on connecting past the
+   * limit rather than pulse forever. An online invite that has sat unanswered
+   * a long time is flagged, since it may no longer reach this phone.
+   */
+  watchHandshake() {
+    const hs = this.hs;
+    const p = this.peer;
+    if (!hs || !p || p.connected || p.closed) return;
+    const ms = performance.now() - hs.at;
+    const mode = this.online ? 'online' : 'wifi';
+    let slowAfter = Infinity;
+    let status = null;
+    if (hs.stage === 'connecting') {
+      const t = CONNECT_TIMES[mode];
+      if (ms > t.limit) {
+        this.onDrop('timeout');
+        return;
+      }
+      slowAfter = t.slow;
+      const ice = p.pc.iceConnectionState;
+      status = `${ice === 'connected' || ice === 'completed' ? 'Securing the link' : 'Connecting'} · ${waited(ms)}`;
+    } else if (hs.stage === 'reply') {
+      slowAfter = REPLY_SLOW[mode];
+      status = `${this.online ? 'Waiting for them to paste it' : 'Waiting for the host'} · ${waited(ms)}`;
+    } else if (hs.stage === 'invite' && this.online) {
+      slowAfter = STALE_INVITE;
+      status = `Waiting for their reply · invite made ${madeAgo(ms)}`;
+    }
+    if (!hs.slow && ms > slowAfter) {
+      hs.slow = true;
+      log(`handshake: slow at the ${hs.stage} step`);
+      this.screens.showLater();
+    }
+    if (status) this.screens.tickStatus(status);
+  }
+
+  /**
+   * The online host is back from the chat app it sent the invite through, and
+   * the friend's reply may be on the clipboard. Where the browser lets a page
+   * read it unasked — once the player has allowed it — it is taken at once;
+   * everywhere else the Paste button is lit up, one tap away.
+   */
+  async offerPaste() {
+    const d = this.screens.data;
+    if (!this.online || this.screens.current !== 'host' || d?.stage !== 'code') return;
+    this.screens.nudgePaste();
+    let granted = false;
+    try {
+      granted = (await navigator.permissions.query({ name: 'clipboard-read' })).state === 'granted';
+    } catch { /* this browser can't say; only a tap reads the clipboard */ }
+    if (!granted) return;
+    let text;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return;
+    }
+    // Whatever else is on the clipboard — this phone's own invite, a link,
+    // last week's code — is none of the game's business.
+    const code = extractCode(text);
+    if (!CODE_RE.test(code) || code === this.peer?.code) return;
+    try {
+      if ((await unpackSignal(code)).role !== 'answer') return;
+    } catch {
+      return;
+    }
+    log('handshake: reply taken from the clipboard');
+    this.acceptAnswer(code);
   }
 
   startScanner(onCode) {
@@ -1271,13 +1534,21 @@ class App {
     try {
       // The invite travels as a link so the friend just taps it and the game
       // joins itself; the reply stays a bare code, because tapping a link
-      // would navigate the host away from its own live connection.
+      // would navigate the host away from its own live connection. Online,
+      // each says in a line what it is for, since it arrives in a chat.
       if (kind === 'link') {
-        await navigator.share({ title: 'RoGuPong', url: inviteLink(code) });
+        await navigator.share(this.online
+          ? { title: 'RoGuPong', text: 'Play RoGuPong with me! Tap to join:', url: inviteLink(code) }
+          : { title: 'RoGuPong', url: inviteLink(code) });
       } else {
-        await navigator.share({ text: code });
+        await navigator.share({ text: this.online ? this.replyMessage(code) : code });
       }
     } catch { /* the user closed the share sheet */ }
+  }
+
+  /** An online reply as a chat message: a line for the friend, then the code the paste box finds in it. */
+  replyMessage(code) {
+    return `My RoGuPong reply — paste it into your game:\n${code}`;
   }
 
   async pasteFromClipboard(next) {
@@ -1404,10 +1675,15 @@ class App {
       case 'play':
         this.tryImmersive();
         audio.playMusic('menu');
-        this.go('connect');
+        this.go('connect', { online: this.online });
+        break;
+      case 'connect-mode':
+        this.online = data.mode === 'online';
+        this.go('connect', { online: this.online });
         break;
       case 'title':
         this.leave(false);
+        this.rejoin = null;
         this.go('title');
         break;
       case 'howto': this.go('howto'); break;
@@ -1463,21 +1739,14 @@ class App {
         break;
 
       case 'host': this.beginHost(); break;
-      case 'join':
-        if (scannerSupported()) {
-          this.go('join', { stage: 'scan' });
-          requestAnimationFrame(() => this.startScanner((code) => this.beginJoin(code)));
-        } else {
-          this.go('join', { stage: 'paste' });
-        }
-        break;
-      case 'join-paste': this.stopScanner(); this.go('join', { stage: 'paste' }); break;
+      case 'join': this.openJoin(); break;
+      case 'join-paste': this.stopScanner(); this.go('join', this.signalData({ stage: 'paste' })); break;
       case 'use-pasted': {
         const v = document.getElementById('paste-input')?.value.trim();
         if (v) this.beginJoin(v);
         break;
       }
-      case 'paste-answer': this.stopScanner(); this.go('pasteAnswer'); break;
+      case 'paste-answer': this.stopScanner(); this.go('pasteAnswer', this.signalData({})); break;
       case 'use-answer': {
         const v = document.getElementById('paste-input')?.value.trim();
         if (v) this.acceptAnswer(v);
@@ -1493,8 +1762,16 @@ class App {
       case 'cancel':
         this.stopScanner();
         this.leave(true);
-        this.go('connect');
+        this.rejoin = null;
+        this.go('connect', { online: this.online });
         break;
+      // Couldn't connect's Try again, or a slow handshake's fresh start: the
+      // same side over again, in the same mode.
+      case 'retry':
+        this.leave(false);
+        this.retryHandshake();
+        break;
+      case 'rejoin': this.beginRejoin(); break;
 
       case 'pick-char':
         this.myChar = data.char;
@@ -1554,6 +1831,7 @@ class App {
       }
       case 'leave':
         this.leave(true);
+        this.rejoin = null;
         this.go('title');
         break;
       default:
@@ -1580,6 +1858,9 @@ class App {
   leave(notify) {
     this.finishHistory();
     this.stopScanner();
+    // Any handshake still being made is abandoned with it.
+    this.handshakeSeq++;
+    this.hs = null;
     if (this.peer) {
       if (notify) this.peer.send({ t: 'bye' });
       this.peer.close();
@@ -1588,15 +1869,20 @@ class App {
     this.match = null;
     this.finishing = false;
     this.keepAwake(false);
+    audio.setDucked(false);
     audio.playMusic('menu');
   }
 
   async copyCode() {
     const code = this.peer?.code;
     if (!code) return;
+    // Online, an invite pasted into a chat should arrive as a link to tap.
+    const invite = this.online && this.peer.isHost;
+    const text = !this.online ? code : invite ? inviteLink(code) : this.replyMessage(code);
     try {
-      await navigator.clipboard.writeText(code);
-      this.screens.toast('Code copied — send it however you like', 'good');
+      await navigator.clipboard.writeText(text);
+      this.screens.toast(!this.online ? 'Code copied — send it however you like'
+        : invite ? 'Invite copied — paste it into your chat' : 'Reply copied — send it back to your friend', 'good');
     } catch {
       const box = document.getElementById('rawcode');
       if (box) {

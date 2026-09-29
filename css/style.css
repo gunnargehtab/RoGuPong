@@ -152,6 +152,8 @@ b, strong { color: var(--ink); }
 
 .btn.danger { background: linear-gradient(#ff8f83, var(--red) 60%, #a51231); color: #fff; }
 .btn.small { min-height: 42px; padding: 10px 12px; font-size: 0.72rem; }
+/* Back from the chat app: the button that finishes the job, pointed at. */
+.btn.nudge { border-color: var(--cyan); animation: blink 0.45s steps(2) 6; }
 
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
