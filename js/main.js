@@ -18,6 +18,7 @@ import { Peer } from './net/peer.js';
 import { extractCode, inviteLink, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
+import { log, logLines, clock, device, isIOS } from './diag.js';
 
 const SNAPSHOT_HZ = 30;
 const INPUT_HZ = 30;
@@ -37,6 +38,32 @@ const PROTOCOL = 2;
 // input send interval + RTT + host frame (and its up-to-6-step backlog) +
 // snapshot interval + a 30 Hz low-power-mode guest frame is ~0.25 s at worst.
 const PREDICT_MEMORY = 0.45;
+
+// Where a drop happened, as the Link Lost screen says it.
+const STEP_LABEL = {
+  handshake: 'While connecting',
+  lobby: 'In the lobby',
+  match: 'During a match',
+  results: 'On the results screen',
+  board: 'On the leaderboard',
+};
+const WIFI_HINT = 'Both phones need to stay on the same WiFi. Some guest networks block '
+  + 'phones from talking to each other — a personal hotspot works around that.';
+const AWAY_HINT = 'Switching apps or letting the screen lock pauses the game, and the other '
+  + 'phone gives up after a few seconds of silence. Keep RoGuPong on screen on both phones '
+  + 'while you play.';
+
+const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
+/** A phone's last trip off the screen, as the Link Lost screen tells it. */
+function awayText(hiddenAt, last, now, theirs) {
+  if (hiddenAt != null) return `In the background for ${secs(now - hiddenAt)}`;
+  if (last && now - last.back < 60000) {
+    return `In the background for ${secs(last.for)}, back ${secs(now - last.back)} before`;
+  }
+  // An older build never says when it leaves the screen, so silence proves nothing.
+  return theirs ? 'No word of leaving the screen' : 'On screen';
+}
 
 class App {
   constructor() {
@@ -73,32 +100,126 @@ class App {
     this.lastFrame = performance.now();
     this.menuTime = 0;
     this.wakeLock = null;
+    this.wakeLockPending = false;
+    this.wantAwake = false;
+    this.wakeLockNote = 'wakeLock' in navigator ? 'off' : 'not supported';
     this.simAccum = 0;
+    // This session's graphics. The profile holds only what was picked by hand;
+    // the frame-rate watcher's switch lasts until the page closes.
+    this.quality = this.profile.quality;
+    this.qualityPinned = false;
+    this.fps = 0;
     this.fpsCount = 0;
     this.fpsSum = 0;
+    this.fpsNear30 = 0;
+    this.fpsSkip = 0;
     this.slowFrames = 0;
+    this.capNoted = false;
+    // When each phone last left the screen, for the Link Lost screen.
+    this.hiddenAt = document.hidden ? performance.now() : null;
+    this.lastAway = null;         // { for, back } — our last spell in the background
+    this.theirHiddenAt = null;
+    this.theirLastAway = null;
+    this.lastDrop = null;
+    this.storageNote = 'unknown';
 
     audio.setMusic(this.profile.music);
     audio.setSfx(this.profile.sfx);
-    this.renderer.setQuality(this.profile.quality);
-    this.fx.setQuality(this.profile.quality);
+    this.renderer.setQuality(this.quality);
+    this.fx.setQuality(this.quality);
 
     window.addEventListener('resize', () => this.renderer.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 300));
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) audio.stopMusic();
-      else if (this.mode === 'match') audio.playMusic('match');
-      else audio.playMusic('menu');
-    });
+    document.addEventListener('visibilitychange', () => this.onVisibility());
+    // Closing the tab can tear the link down without a word, leaving the other
+    // phone to wait out the silence and a grace period. Say goodbye on the way.
+    window.addEventListener('pagehide', () => { if (this.peer?.connected) this.peer.send({ t: 'bye' }); });
+    // Audio can only start — or restart after iOS parks it — inside a real
+    // gesture, and mid-match every gesture is a paddle drag on the canvas,
+    // which never reaches the menus' click handler.
+    for (const type of ['pointerup', 'touchend', 'keydown']) {
+      window.addEventListener(type, () => audio.unlock(), { capture: true, passive: true });
+    }
 
     // Tapping an invite while the game is already open only changes the
     // fragment — the page never reloads — so listen for that as well as
     // checking on startup.
     window.addEventListener('hashchange', () => this.consumeInviteLink());
 
+    this.watchForDiagnostics();
+    this.keepStorage();
     this.go('title');
     requestAnimationFrame((t) => this.frame(t));
     this.consumeInviteLink();
+  }
+
+  /** The moments worth having in the log when something goes wrong later. */
+  watchForDiagnostics() {
+    const nav = performance.getEntriesByType?.('navigation')?.[0]?.type || 'navigate';
+    log(`page loaded (${nav}) · protocol ${PROTOCOL}`);
+    window.addEventListener('error', (e) => {
+      log(`error: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`);
+    });
+    window.addEventListener('unhandledrejection', (e) => log(`error: ${e.reason?.message || e.reason}`));
+    window.addEventListener('online', () => log('network: online'));
+    window.addEventListener('offline', () => log('network: offline'));
+    // Chrome freezes a background page outright after a while; iOS just
+    // suspends it, which only shows up as the gap between hidden and visible.
+    document.addEventListener('freeze', () => log('page frozen'));
+    document.addEventListener('resume', () => log('page resumed'));
+    window.addEventListener('pagehide', (e) => log(`page hide${e.persisted ? ' (kept in memory)' : ''}`));
+  }
+
+  /**
+   * Safari may clear a site's storage — the match history and flair with it —
+   * when the phone runs short of space or the site goes unvisited for a while.
+   * Asking for persistent storage is the one lever a page has. Only on iOS:
+   * the eviction is Safari's, and some other browsers put a permission prompt
+   * in front of the request.
+   */
+  async keepStorage() {
+    const s = navigator.storage;
+    if (!s?.persisted) { this.storageNote = 'no storage manager'; return; }
+    try {
+      let kept = await s.persisted();
+      if (!kept && isIOS() && s.persist) kept = await s.persist();
+      this.storageNote = kept ? 'persistent' : 'best effort';
+    } catch {
+      this.storageNote = 'unknown';
+    }
+  }
+
+  /**
+   * The page hid or came back. A hidden page is paused — on iOS entirely,
+   * timers and audio included — and loses its wake lock, so coming back
+   * means picking all of that up again. The other phone is told too: a
+   * friend who went quiet because they switched apps is a different problem
+   * from a WiFi that went quiet, and the Link Lost screen tells them apart.
+   */
+  onVisibility() {
+    const now = performance.now();
+    const hidden = document.hidden;
+    if (this.peer?.connected) this.peer.send({ t: 'away', v: hidden });
+    if (hidden) {
+      this.hiddenAt = now;
+      log('page hidden');
+      audio.stopMusic();
+      return;
+    }
+    if (this.hiddenAt != null) {
+      this.lastAway = { for: now - this.hiddenAt, back: now };
+      log(`page visible after ${secs(now - this.hiddenAt)}`);
+    }
+    this.hiddenAt = null;
+    // The first frames back span the whole absence; they say nothing about
+    // how fast this phone draws.
+    this.fpsCount = 0;
+    this.fpsSum = 0;
+    this.fpsNear30 = 0;
+    this.fpsSkip = 2;
+    audio.resume();
+    audio.playMusic(this.mode === 'match' ? 'match' : 'menu');
+    if (this.wantAwake) this.keepAwake(true);
   }
 
   get view() { return this.peer && !this.peer.isHost ? 1 : 0; }
@@ -140,6 +261,7 @@ class App {
   }
 
   go(screen, data = {}) {
+    log(`screen: ${screen}${data.stage && typeof data.stage === 'string' ? ` (${data.stage})` : ''}`);
     if (screen === 'match') {
       this.mode = 'match';
       this.screens.hide();
@@ -166,25 +288,41 @@ class App {
 
   /**
    * Watch the real frame rate and drop the renderer to its cheap path if the
-   * phone cannot keep up. Sticky for the session and remembered afterwards, so
-   * an older handset settles once instead of oscillating between looks.
+   * phone cannot keep up. Sticky for the session, so an older handset settles
+   * once instead of oscillating between looks.
    *
    * Every laggy second before the switch is a second of mushy paddle, so this
    * decides fast: a phone that is merely struggling gets a second opinion, one
    * that is drowning is demoted on the first window. Windows close on elapsed
    * time as well as frame count, so a phone crawling at a few fps doesn't take
    * most of a minute to accumulate enough frames to be judged.
+   *
+   * A steady 30 fps is left alone. That is a frame-rate cap, not a phone
+   * struggling — iOS holds every page to 30 in Low Power Mode — and the cheap
+   * path can't beat a cap; it only makes the game look worse. Nor is the
+   * switch saved: Low Power Mode ends and phones cool down, so the next
+   * session takes its own look.
    */
   sampleFrameRate(dt) {
-    if (this.profile.quality === 'low' || dt <= 0) return;
+    if (dt <= 0) return;
+    if (this.fpsSkip > 0) { this.fpsSkip--; return; }
     this.fpsCount++;
     this.fpsSum += dt;
+    if (dt > 1 / 36 && dt < 1 / 25) this.fpsNear30++;
     if (this.fpsCount < 45 && !(this.fpsSum >= 1.5 && this.fpsCount >= 8)) return;
     const mean = this.fpsSum / this.fpsCount;
+    const capped = this.fpsNear30 >= this.fpsCount * 0.8;
     this.fpsCount = 0;
     this.fpsSum = 0;
-    if (mean > 1 / 32) { this.setQuality('low', true); return; }
-    if (mean > 1 / 45) {
+    this.fpsNear30 = 0;
+    this.fps = Math.round(1 / mean);
+    if (capped && !this.capNoted) {
+      this.capNoted = true;
+      log(`steady ${this.fps} fps: looks like a frame-rate cap (Low Power Mode?)`);
+    }
+    if (this.quality === 'low' || this.qualityPinned) return;
+    if (mean > 1 / 27) { this.setQuality('low', true); return; }
+    if (mean > 1 / 45 && !capped) {
       // Two bad windows in a row, so a one-off hitch does not demote a phone
       // that is actually fine.
       this.slowFrames++;
@@ -194,16 +332,28 @@ class App {
     }
   }
 
+  /**
+   * Switch the graphics path. A choice made on the Graphics toggle is saved,
+   * and the frame-rate watcher leaves it be for the rest of the session; the
+   * watcher's own switch lasts for this session only.
+   */
   setQuality(quality, automatic = false) {
-    if (this.profile.quality === quality) return;
-    this.profile.quality = quality;
-    lb.saveProfile(this.profile);
+    if (!automatic) {
+      this.qualityPinned = true;
+      this.profile.quality = quality;
+      this.profile.qualityChosen = true;
+      lb.saveProfile(this.profile);
+    }
+    if (this.quality === quality) return;
+    this.quality = quality;
     this.renderer.setQuality(quality);
     this.fx.setQuality(quality);
     this.fpsCount = 0;
     this.fpsSum = 0;
+    this.fpsNear30 = 0;
     this.slowFrames = 0;
     if (automatic && quality === 'low') {
+      log(`graphics: switched to fast at ${this.fps} fps`);
       this.screens.toast('Switched to fast graphics for a smoother game');
     }
   }
@@ -436,7 +586,7 @@ class App {
         }
       }
       this.pendingResult = null;
-      this.keepAwake(false);
+      this.keepAwake(!!this.peer);        // still connected: the rematch is a tap away
       audio.playMusic('menu');
       this.go('results', {
         rec, view: this.view, wantsRematch: false, theirRematch: this.theirRematch,
@@ -445,15 +595,49 @@ class App {
     tryShow();
   }
 
+  /**
+   * Keep the screen on for as long as a connection is up or being made —
+   * handshake, lobby, match, results. A phone that dims and locks pauses the
+   * page, and the other phone soon gives up on it. Browsers drop the lock
+   * whenever the page hides (iOS on every notification or app switch), so
+   * onVisibility asks for it again each time the page comes back.
+   */
   async keepAwake(on) {
-    try {
-      if (on && 'wakeLock' in navigator && !this.wakeLock) {
-        this.wakeLock = await navigator.wakeLock.request('screen');
-      } else if (!on && this.wakeLock) {
-        await this.wakeLock.release();
-        this.wakeLock = null;
+    this.wantAwake = on;
+    if (!('wakeLock' in navigator)) return;
+    if (!on) {
+      const lock = this.wakeLock;
+      this.wakeLock = null;
+      if (lock) {
+        this.wakeLockNote = 'off';
+        lock.release().catch(() => { /* already gone */ });
       }
-    } catch { /* not supported, or denied — harmless */ }
+      return;
+    }
+    // Only a visible page may hold one.
+    if (this.wakeLock || this.wakeLockPending || document.hidden) return;
+    this.wakeLockPending = true;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      lock.addEventListener('release', () => {
+        if (this.wakeLock !== lock) return;          // we let it go ourselves
+        this.wakeLock = null;
+        this.wakeLockNote = 'released by the browser';
+        log('wake lock released');
+      });
+      if (this.wantAwake) {
+        this.wakeLock = lock;
+        this.wakeLockNote = 'held';
+        log('wake lock held');
+      } else {
+        lock.release().catch(() => { /* already gone */ });
+      }
+    } catch (err) {
+      this.wakeLockNote = `refused (${err.name})`;
+      log(`wake lock refused: ${err.name}`);
+    } finally {
+      this.wakeLockPending = false;
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -461,6 +645,18 @@ class App {
 
   attachPeer(peer) {
     this.peer = peer;
+    this.theirHiddenAt = null;
+    this.theirLastAway = null;
+    this.keepAwake(true);
+    log(`${peer.isHost ? 'hosting' : 'joining'}: code ready`);
+    peer.on('stall', () => {
+      log('link: stalled, waiting for it to come back');
+      this.screens.toast('Connection hiccup — hold on…', 'warn');
+    });
+    peer.on('recover', (ms) => {
+      log(`link: back after ${secs(ms)}`);
+      this.screens.toast('Connection back', 'good');
+    });
     peer.on('open', () => {
       this.stopScanner();
       audio.blip(880, 0.1);
@@ -475,6 +671,8 @@ class App {
         matches: lb.allMatches().slice(-HISTORY_SHARED),
       });
       if (peer.isHost) peer.send(this.setupMsg());
+      // Opened behind a chat app, while the reply was still being shared.
+      if (document.hidden) peer.send({ t: 'away', v: true });
       this.openLobby();
     });
     peer.on('msg', (msg) => this.onMessage(msg));
@@ -607,8 +805,21 @@ class App {
       case 'emote':
         this.popEmote(EMOTES[msg.i] || '👋');
         break;
+      case 'away': {
+        // Their page hid or came back. Diagnostics only, for now: older
+        // builds never send it, so nothing may depend on hearing it.
+        const now = performance.now();
+        if (msg.v) {
+          this.theirHiddenAt = now;
+        } else if (this.theirHiddenAt != null) {
+          this.theirLastAway = { for: now - this.theirHiddenAt, back: now };
+          this.theirHiddenAt = null;
+        }
+        log(`friend: page ${msg.v ? 'hidden' : 'visible'}`);
+        break;
+      }
       case 'bye':
-        this.onDrop('Your friend left the match.');
+        this.onDrop('bye');
         break;
       default:
         break;
@@ -624,17 +835,118 @@ class App {
     }
   }
 
+  /** reason: 'bye', or the peer's 'timeout' | 'disconnected' | 'failed' | 'closed'. */
   onDrop(reason) {
+    const drop = this.describeDrop(reason);
+    this.lastDrop = drop;
+    log(`drop: ${reason} · ${drop.facts.map(([k, v]) => `${k.toLowerCase()}: ${v}`).join(' · ')}`);
     this.stopScanner();
     audio.stopMusic();
     audio.playMusic('menu');
     this.keepAwake(false);
     this.match = null;
     if (this.peer) { this.peer.close(); this.peer = null; }
-    const text = typeof reason === 'string' && reason.length > 12
-      ? reason
-      : 'The other phone dropped off the network.';
-    this.go('lost', { reason: text });
+    this.go('lost', drop);
+  }
+
+  /**
+   * What the Link Lost screen and the diagnostics say about a drop, taken
+   * before the connection is torn down: why, at which step, how long the line
+   * had been quiet, and whether either phone had left the screen — which is
+   * what tells a WiFi problem from a phone that was paused.
+   */
+  describeDrop(reason) {
+    const now = performance.now();
+    const p = this.peer;
+    const opened = !!p?.openedAt;
+    const step = !opened ? 'handshake' : this.mode === 'match' ? 'match' : this.screens.current;
+    const who = this.theirName || 'your friend';
+    const Who = this.theirName || 'Your friend';
+    const quiet = opened ? now - p.lastSeen : 0;
+    const text = {
+      bye: `${Who} left.`,
+      timeout: `Nothing came through from ${who}'s phone for ${Math.round(quiet / 1000)} seconds.`,
+      disconnected: `The link to ${who}'s phone went down and didn't come back.`,
+      failed: opened ? `The link to ${who}'s phone failed.` : 'The two phones couldn\'t reach each other.',
+      closed: `${Who}'s phone closed the connection.`,
+    }[reason] || 'The connection dropped.';
+
+    const facts = [['When', STEP_LABEL[step] || 'In the menus']];
+    if (opened) {
+      facts.push(
+        ['Last heard', `${secs(quiet)} before`],
+        ['This phone', awayText(this.hiddenAt, this.lastAway, now, false)],
+        ['Their phone', awayText(this.theirHiddenAt, this.theirLastAway, now, true)],
+      );
+    } else if (p) {
+      facts.push(['Trying for', secs(now - p.createdAt)]);
+    }
+
+    const leftScreen = this.hiddenAt != null || this.theirHiddenAt != null
+      || (this.lastAway && now - this.lastAway.back < 30000)
+      || (this.theirLastAway && now - this.theirLastAway.back < 30000);
+    const hint = reason === 'bye' ? null : opened && leftScreen ? AWAY_HINT : WIFI_HINT;
+
+    return {
+      reason, step, text, facts, hint, wall: Date.now(),
+      link: p ? this.linkSummary(p, now) : 'none',
+    };
+  }
+
+  /** The connection in one line, for diagnostics. */
+  linkSummary(p, now = performance.now()) {
+    const age = p.openedAt ? `open ${secs(now - p.openedAt)}` : `connecting ${secs(now - p.createdAt)}`;
+    return [
+      p.isHost ? 'host' : 'guest',
+      `${p.pc.connectionState} (ice ${p.pc.iceConnectionState})`,
+      age,
+      p.openedAt ? `last heard ${secs(now - p.lastSeen)} ago` : null,
+      p.rtt ? `rtt ${p.rtt} ms` : null,
+      p.openedAt ? `their protocol ${this.theirProtocol ?? '?'}` : null,
+      p.candidates(),
+    ].filter(Boolean).join(' · ');
+  }
+
+  /** The Copy diagnostics report: this phone, the link, the last drop and the event log. */
+  diagnostics() {
+    const r = this.renderer;
+    const s = r.safe;
+    const onOff = (v) => (v ? 'on' : 'off');
+    const graphics = this.quality === 'low' ? 'fast' : 'full';
+    const why = this.qualityPinned ? 'picked' : this.quality !== this.profile.quality ? 'switched automatically' : null;
+    const d = this.lastDrop;
+    const lines = [
+      `RoGuPong diagnostics · ${new Date().toISOString().slice(0, 10)} ${clock()}`,
+      `build: protocol ${PROTOCOL}`,
+      `device: ${device()}`,
+      `browser: ${navigator.userAgent}`,
+      `screen: ${r.W}x${r.H} at ${window.devicePixelRatio || 1}x, canvas ${r.dpr}x · `
+        + `safe area ${s.top}/${s.right}/${s.bottom}/${s.left} (top/right/bottom/left)`,
+      `graphics: ${graphics}${why ? ` (${why})` : ''} · ${this.fps ? this.fps + ' fps' : 'fps not measured yet'}`,
+      `audio: ${audio.ctx ? audio.ctx.state : 'not started'} · music ${onOff(this.profile.music)} · sfx ${onOff(this.profile.sfx)}`,
+      `wake lock: ${this.wakeLockNote}`,
+      `storage: ${this.storageNote} · ${lb.allMatches().length} matches kept`,
+      `page: ${document.hidden ? 'hidden' : 'visible'} · ${navigator.onLine ? 'online' : 'offline'} · `
+        + `on ${this.mode === 'match' ? 'a match' : this.screens.current || '?'}`,
+      `link: ${this.peer ? this.linkSummary(this.peer) : 'none'}`,
+      d ? `last drop: ${d.reason} at ${clock(d.wall)} — ${d.text}` : 'last drop: none this session',
+      ...(d ? [`  ${d.facts.map(([k, v]) => `${k}: ${v}`).join(' · ')}`, `  link then: ${d.link}`] : []),
+      '',
+      'events:',
+      ...logLines(),
+    ];
+    return lines.join('\n');
+  }
+
+  async copyDiagnostics() {
+    const text = this.diagnostics();
+    try {
+      await navigator.clipboard.writeText(text);
+      this.screens.toast('Diagnostics copied — paste them into your report', 'good');
+    } catch {
+      this.screens.revealText(text);
+      this.screens.toast('Selected — long-press to copy');
+    }
   }
 
   popEmote(glyph) {
@@ -786,9 +1098,10 @@ class App {
       case 'toggle-quality':
         // An explicit choice also stops the frame-rate watcher from second
         // guessing it later in the session.
-        this.setQuality(this.profile.quality === 'low' ? 'high' : 'low');
+        this.setQuality(this.quality === 'low' ? 'high' : 'low');
         this.screens.refresh();
         break;
+      case 'copy-diag': this.copyDiagnostics(); break;
       case 'toggle-sfx':
         this.profile.sfx = !this.profile.sfx;
         audio.setSfx(this.profile.sfx);

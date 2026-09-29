@@ -7,6 +7,8 @@
 // Browsers refuse to start audio until the user touches something, so nothing
 // is created until unlock() is called from a real tap.
 
+import { log } from '../diag.js';
+
 const NOTE = (semitone) => 440 * Math.pow(2, (semitone - 9) / 12);   // 0 = C4
 
 // A little two-part loop in A minor: square lead over a triangle bass, with a
@@ -48,12 +50,19 @@ export class Audio {
   /** Must be called from inside a real user gesture. */
   unlock() {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+      this.resume();
       return;
     }
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return;
     this.ctx = new Ctor();
+    // iOS parks the context — 'interrupted' for a call, Siri or an app
+    // switch, 'suspended' at other times — and doesn't always bring it back.
+    this.ctx.onstatechange = () => {
+      const s = this.ctx.state;
+      log(`audio: ${s}`);
+      if (s === 'suspended' && !document.hidden) this.resume();
+    };
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.8;
     this.master.connect(this.ctx.destination);
@@ -64,6 +73,20 @@ export class Audio {
     this.sfxGain.gain.value = this.sfxOn ? 0.55 : 0;
     this.sfxGain.connect(this.master);
   }
+
+  /**
+   * Bring a parked context back. Outside a user gesture iOS may refuse, so
+   * the next touch anywhere tries again (App listens for one).
+   */
+  resume() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'running' || ctx.state === 'closed') return;
+    ctx.resume().catch(() => { /* wants a gesture; the next touch brings one */ });
+  }
+
+  // A parked context's clock stands still, so anything scheduled on it would
+  // all go off at once when it wakes. Stay quiet until it runs.
+  get live() { return !!this.ctx && this.ctx.state === 'running'; }
 
   setMusic(on) {
     this.musicOn = on;
@@ -79,7 +102,7 @@ export class Audio {
   /* One-shots                                                         */
 
   tone(freq, dur, type = 'square', gain = 0.2, dest = null, detune = 0) {
-    if (!this.ctx || !this.sfxOn) return;
+    if (!this.live || !this.sfxOn) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
@@ -95,7 +118,7 @@ export class Audio {
   }
 
   sweep(from, to, dur, type = 'sawtooth', gain = 0.22) {
-    if (!this.ctx || !this.sfxOn) return;
+    if (!this.live || !this.sfxOn) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
@@ -110,7 +133,7 @@ export class Audio {
   }
 
   noise(dur = 0.2, gain = 0.18, filterFreq = 1800, sweepTo = null) {
-    if (!this.ctx || !this.sfxOn) return;
+    if (!this.live || !this.sfxOn) return;
     const t = this.ctx.currentTime;
     const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -184,7 +207,7 @@ export class Audio {
   }
 
   tickMusic(lead) {
-    if (!this.ctx || !this.musicOn) return;
+    if (!this.live || !this.musicOn) return;
     const i = this.step % lead.length;
     const l = lead[i];
     if (l != null) this.voice(NOTE(l) * 2, 0.16, 'square', 0.12);

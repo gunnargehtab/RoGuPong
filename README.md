@@ -79,12 +79,21 @@ moment it lands in the box.
 > iOS gives a web page access to a QR scanner, so the invite is encoded as a
 > link and read by the phone's own Camera app instead — which only helps in the
 > joining direction. An iPhone can still host, it just has to take the reply
-> code by paste rather than by scanning.
+> code by paste rather than by scanning. The Camera app opens invites in
+> Safari, not in a copy of the game added to the home screen, and the two keep
+> separate names and histories.
 
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
 > the link never comes up, put one phone on a personal hotspot and connect the
 > other to it.
+
+> **If the link drops**, the Link Lost screen says why, and whether either
+> phone had left the screen — switching apps or letting the screen lock pauses
+> the game. **Copy diagnostics** (there, and at the foot of the title screen)
+> copies the details of the phone and what just happened, ready to paste into
+> an issue. A brief WiFi hiccup no longer ends the session: the game waits up
+> to ten seconds for the link to come back.
 
 ### Controls
 
@@ -149,6 +158,7 @@ css/style.css         16-bit console UI
 sw.js                 service worker — makes the game work offline
 js/
   main.js             screen router, connection lifecycle, frame loop
+  diag.js             event log and the Copy diagnostics report
   ui/
     pixelfont.js      62-glyph 5x7 bitmap font
     logo.js           the RoGuPong logotype

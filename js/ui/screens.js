@@ -15,6 +15,7 @@ import { drawQrToCanvas } from '../net/qr.js';
 import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
+import { isIOS } from '../diag.js';
 
 // Two grid rows of four. Indices ride the wire ({t:'emote', i}), so only ever
 // append — reordering would make old phones pop the wrong glyph.
@@ -122,6 +123,29 @@ export class Screens {
     }, kind === 'bad' || kind === 'warn' ? 4200 : 2400);
   }
 
+  /**
+   * Put a block of text on the current screen, selected, for when the
+   * clipboard is out of reach. The box is selectable, so a long-press copies it.
+   */
+  revealText(text) {
+    const screen = this.root.querySelector('.screen');
+    if (!screen) return;
+    let box = screen.querySelector('#reveal');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'reveal';
+      box.className = 'code-box report';
+      screen.appendChild(box);
+    }
+    box.textContent = text;
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    box.scrollIntoView({ block: 'nearest' });
+  }
+
   tickLogo(time) {
     if (this.logoCanvas && this.logoCanvas.isConnected) {
       renderLogoTo(this.logoCanvas, Math.min(this.root.clientWidth - 36, 420), time);
@@ -171,12 +195,20 @@ export class Screens {
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn small secondary" data-action="toggle-quality">
-          Graphics set to ${this.profile.quality === 'low' ? 'fast' : 'full'}</button>
+          Graphics set to ${this.app.quality === 'low' ? 'fast' : 'full'}</button>
       </div>
       <small class="muted" style="display:block;margin-top:6px">
         Tap to switch. Fast drops the glows, scanlines and animated scenery.
         Older phones get a much smoother game.</small>`;
     wrap.appendChild(who);
+
+    // For a glitch that never reached the Link Lost screen: a dead sound, a
+    // phone that went to sleep, a drop the page was reloaded after.
+    const diag = document.createElement('button');
+    diag.className = 'textbtn';
+    diag.dataset.action = 'copy-diag';
+    diag.textContent = 'Copy diagnostics';
+    wrap.appendChild(diag);
 
     const input = who.querySelector('#pname');
     const commit = () => {
@@ -542,10 +574,16 @@ export class Screens {
       });
     }
     if (data.stage === 'paste') {
+      // An invite the Camera app reads opens in the browser, which keeps its
+      // own name, history and offline copy apart from a home-screen install.
+      const iosNote = isIOS()
+        ? '<small style="display:block;margin-top:8px">On iPhone, invites scanned with the Camera app '
+          + 'open in Safari (or your default browser), not in the home-screen app.</small>'
+        : '';
       const wrap = this.signalScreen({
         title: 'PASTE CODE',
         step: 0, steps: 3,
-        instruction: 'Paste the code your friend sent you — it connects as soon as it lands.',
+        instruction: 'Paste the code your friend sent you — it connects as soon as it lands.' + iosNote,
         actions: `
           <button class="btn" data-action="use-pasted">Connect</button>
           <button class="btn secondary" data-action="cancel">Cancel</button>`,
@@ -799,23 +837,32 @@ export class Screens {
   /* ---------------------------------------------------------------- */
   /* Disconnected                                                      */
 
+  /**
+   * Why the link went, when, and whether either phone had left the screen —
+   * enough to tell a WiFi problem from a paused phone at a glance, and the
+   * Copy diagnostics button carries the rest to a bug report.
+   */
   screenLost(data) {
+    const { text, facts = [], hint } = data;
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('LINK LOST', { scale: 3, color: '#ff4d3d' }));
     const panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML = `
-      <p>${esc(data.reason || 'The connection dropped.')}</p>
-      <p style="margin-top:8px"><small>Both phones need to stay on the same WiFi. Some
-      guest networks block phones from talking to each other — a personal hotspot works
-      around that.</small></p>`;
+      <p><b>${esc(text || 'The connection dropped.')}</b></p>
+      ${facts.length ? `<table style="margin-top:10px"><tbody>${facts.map(([k, v]) => `
+        <tr><td class="muted">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${hint ? `<p style="margin-top:10px"><small>${esc(hint)}</small></p>` : ''}`;
     wrap.appendChild(panel);
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.dataset.action = 'title';
-    btn.textContent = 'Back to title';
-    wrap.appendChild(btn);
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.flexDirection = 'column';
+    actions.style.gap = '10px';
+    actions.innerHTML = `
+      <button class="btn" data-action="title">Back to title</button>
+      <button class="btn secondary" data-action="copy-diag">Copy diagnostics</button>`;
+    wrap.appendChild(actions);
     return wrap;
   }
 }

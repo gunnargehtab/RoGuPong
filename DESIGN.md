@@ -39,7 +39,9 @@ devices.
 The court is drawn at a fixed 0.56 width-to-height ratio on both phones and
 letterboxed into whatever screen it finds, so a match between a small phone and
 a big one is played on identical geometry. The space left over above and below
-becomes the HUD.
+becomes the HUD. Court and HUD share the screen's *safe area*: a notch, a
+Dynamic Island or a home indicator only ever covers backdrop, never a name, a
+score or the special button. Phones without them lay out exactly as before.
 
 | Quantity | Value | Why |
 | --- | --- | --- |
@@ -351,6 +353,13 @@ changes only the fragment, so the page listens for `hashchange` as well as
 checking on startup. And because only the joining direction is solved, an
 iPhone should be the one that joins — it can host, but takes the reply by paste.
 
+A third is easy to trip over: the Camera app opens the link in Safari (or
+whichever browser is the default), never in a copy of the game added to the
+home screen, and the two keep separate storage — name, match history, flair
+and offline copy. On iPhones the join screen says so in a line. The game also
+asks Safari for persistent storage, so the history isn't cleared when the
+phone runs short of space or the site goes unvisited for a while.
+
 Decoding QR in JavaScript would have covered every combination including two
 iPhones. It was started and then deliberately dropped: roughly seven hundred
 lines of binarizer, perspective sampling and Reed-Solomon error correction, to
@@ -448,14 +457,47 @@ because the threat model is two kids on a sofa.
 | Compact SDP encoding not viable | Silently ships the full description, compressed |
 | ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
 | Camera denied while hosting | The preview is removed; share and paste still work |
-| WiFi has client isolation | Connection fails cleanly with a note suggesting a hotspot |
-| Connection drops mid-match | Heartbeat notices within 8 s and shows a link-lost screen |
+| WiFi has client isolation | Link Lost says the phones couldn't reach each other, with a note suggesting a hotspot |
+| The link blips (WiFi power save, a router hiccup) | WebRTC calls it `disconnected`; the game waits up to 10 s for it to recover, with a toast, before calling it lost |
+| The other phone goes silent | The heartbeat gives up after 8 s with nothing heard and shows the Link Lost screen |
+| A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
+| Any drop | Link Lost says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
 | A snapshot arrives late | Discarded by tick number |
 | The radio backs up mid-match | Superseded state packets are dropped at the source, not queued |
 | The special press is dropped | It cannot be — it travels on the reliable channel |
-| Screen sleeps mid-match | Wake lock requested for the duration of the match |
+| A screen would sleep | A wake lock is held whenever a connection is up or being made, and asked for again each time the page comes back |
+| Audio interrupted (a call, Siri, an app switch) | Resumed when the page comes back and on the next touch, mid-match included |
 | No internet on the second visit | Service worker serves the whole game from cache |
-| The phone can't hold 45 fps | Demoted to the cheap render path within seconds, stickily (see below) |
+| The phone can't hold 45 fps | Demoted to the cheap render path within seconds, for the session (see below) |
+
+**Keeping the link.** WebRTC's `disconnected` state is meant to be temporary —
+a WiFi power-save stall, a router blip, the other phone's radio napping — and
+usually clears by itself, so the game gives it 10 s before calling the link
+lost, holding the heartbeat's verdict meanwhile. The cost is that a phone that
+really vanishes (its WiFi gone, its browser killed) is reported about 15 s
+later rather than 8: WebRTC takes around 5 s to call the link down, then the
+grace runs. A page that closes or reloads doesn't pay it, since it sends `bye`
+on its way out. The wake lock matters as much as the grace: a phone that dims
+and locks pauses the page, and the other phone soon gives up on it. So the
+lock is held from the moment a handshake starts until the phones part, and —
+because browsers drop it whenever the page hides, iOS on every notification or
+app switch — asked for again each time the page comes back.
+
+**When it drops anyway.** Every drop lands on Link Lost with its real reason
+(the friend left, nothing heard for 8 s, the link went down and didn't come
+back, the connection failed, the other phone closed it), the step it happened
+at, how long since the last message, and whether either phone had left the
+screen. That last one is what tells a WiFi problem from a paused phone, so each
+phone tells the other when its page hides or comes back (`away` on the
+reliable channel). Older builds never send it, so nothing but the diagnostics
+depends on it. A **Copy diagnostics** button, on Link Lost and at the foot of
+the title screen, copies that with a description of the phone (browser,
+home-screen app or tab, safe area, graphics and frame rate, audio and
+wake-lock state) and a log of the last 60 moments that matter: the page hiding
+and coming back, link and ICE states, drops, audio and wake-lock interruptions,
+errors. The log lives in `sessionStorage`, so it survives the reload iOS does
+after throwing a background tab away. No player names go in it, because
+reports get pasted into public issues.
 
 **The cheap render path.** A budget phone's GPU is fill-rate-bound, and the
 game's look is mostly full-screen fills, so `low` quality attacks exactly that:
@@ -472,10 +514,20 @@ are cached rather than rebuilt per frame, in both quality levels.
 The demotion watcher judges tumbling windows of 45 frames — or 1.5 s of wall
 clock, whichever comes first, so a phone crawling at a few fps is judged in a
 couple of seconds rather than after 45 slow frames. Two windows under 45 fps,
-or a single window under 32 fps, drop the profile to `low`; the choice is
-sticky for the session and persisted, so an old handset settles once. The
-canvas is also created `desynchronized`, letting Chrome present frames without
-waiting on the compositor — a real slice of touch-to-paddle latency on Android.
+or a single window under 27 fps, drop the game to `low`, and it stays there
+for the rest of the session so an old handset settles once. A steady 30 fps is
+not counted as slow: when at least 80% of a window's frames land near 33 ms,
+that is a frame-rate cap — iOS holds every page to 30 in Low Power Mode — and
+the cheap path can't beat a cap; it only makes the game look worse (at 1× on a
+3× screen). The automatic switch is never saved, because Low Power Mode ends
+and phones cool down, so each session takes its own look. Only a choice made
+on the Graphics toggle is remembered, and the watcher leaves a hand-picked
+setting alone. Earlier builds saved the automatic switch as well, which
+stranded iPhones on `low` for good, so a saved `low` that wasn't picked by
+hand is let go once. The first frames after the page comes back from the
+background span the whole absence and are skipped. The canvas is also created
+`desynchronized`, letting Chrome present frames without waiting on the
+compositor — a real slice of touch-to-paddle latency on Android.
 
 ---
 
