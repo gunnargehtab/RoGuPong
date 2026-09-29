@@ -19,6 +19,7 @@ import { extractCode, inviteLink, unpackSignal, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
+import * as cloud from './data/cloud.js';
 import { log, logLines, clock, device, isIOS } from './diag.js';
 
 const SNAPSHOT_HZ = 30;
@@ -82,6 +83,14 @@ const CONNECT_TIMES = {
 // A guest waiting for the host to take its reply gets a hint after this long.
 // It sets no limit of its own: online, a friend may take minutes to paste it.
 const REPLY_SLOW = { wifi: 45000, online: 150000 };
+// Cloud league sync, for a phone in a league: opening the leaderboard syncs
+// once the last sync is older than FRESH, coming back to the page once it is
+// older than STALE. A failed sync is tried again after RETRY, doubling up to
+// the cap — a WiFi with no internet behind it fails every time.
+const SYNC_FRESH = 30000;
+const SYNC_STALE = 10 * 60000;
+const SYNC_RETRY = 30000;
+const SYNC_RETRY_CAP = 10 * 60000;
 
 // Where a drop happened, as the Link Lost screen says it.
 const STEP_LABEL = {
@@ -148,6 +157,9 @@ class App {
     this.balance = BALANCE;       // the host's, for the match being played
     this.histIn = null;           // their history while it streams in after 'hello'
     this.league = null;           // a league code made ahead of the Share tap
+    this.cloudOffer = null;       // a friend's cloud league this phone didn't join: { key, label }
+    this.cloudTimer = null;
+    this.cloudBackoff = 0;        // the wait before retrying a failed sync, 0 after a good one
     this.myChar = this.profile.char;
     this.theirChar = 'gu';
     this.theirFlair = 'none';
@@ -217,6 +229,11 @@ class App {
 
     this.watchForDiagnostics();
     this.keepStorage();
+    // A match landing on this phone, by play, connect or import, queues it
+    // for the cloud league; the network coming back sends what waited.
+    cloud.onPending(() => this.requestSync());
+    window.addEventListener('online', () => this.requestSync(2000));
+    this.requestSync(4000);
     this.go('title');
     requestAnimationFrame((t) => this.frame(t));
     this.consumeInviteLink();
@@ -296,6 +313,7 @@ class App {
     if (this.wantAwake) this.keepAwake(true);
     this.peer?.backOnScreen();
     this.offerPaste();
+    this.syncIfStale(SYNC_STALE, 3000);
     if (this.missedEmote) {
       const { i, theirs } = this.missedEmote;
       this.missedEmote = null;
@@ -885,6 +903,8 @@ class App {
         flair: this.profile.flair,
         matches: history.slice(-HISTORY_SHARED),
         more: older.length,
+        // The cloud league this phone syncs with, for a friend's to join.
+        league: cloud.leagueKey() || undefined,
       });
       if (peer.isHost) peer.send(this.setupMsg());
       // The rest of the history, matches between other friends included, so
@@ -1021,6 +1041,7 @@ class App {
         const more = Math.min(Math.floor(Number(msg.more)) || 0, 10000);
         if (more > 0) this.histIn = { added, received, recs: [], expect: more };
         else this.reportMerge(added, received);
+        if (msg.league != null) this.cloudSeen(msg.league, `${this.theirName || 'your friend'}'s cloud league`);
         // A build from before the protocol can't notice a mismatch at all, so
         // whichever phone can names the one that needs updating — itself
         // included.
@@ -1286,6 +1307,7 @@ class App {
       `audio: ${audio.ctx ? audio.ctx.state : 'not started'} · music ${onOff(this.profile.music)} · sfx ${onOff(this.profile.sfx)}`,
       `wake lock: ${this.wakeLockNote}`,
       `storage: ${this.storageNote} · ${lb.allMatches().length} matches kept`,
+      `cloud: ${cloud.describeCloud()}`,
       `page: ${document.hidden ? 'hidden' : 'visible'} · ${navigator.onLine ? 'online' : 'offline'} · `
         + `on ${this.mode === 'match' ? (this.match?.holding ? 'a paused match' : 'a match') : this.screens.current || '?'}`,
       `link: ${this.peer ? this.linkSummary(this.peer) : 'none'}`,
@@ -1582,16 +1604,18 @@ class App {
    */
   prepareLeague() {
     const rev = lb.historyRevision();
-    if (this.league?.rev === rev) return;
-    const pending = { rev, made: null };
+    const key = cloud.leagueKey();
+    if (this.league?.rev === rev && this.league.key === key) return;
+    const pending = { rev, key, made: null };
     this.league = pending;
-    league.leagueCode()
+    league.leagueCode(lb.allMatches(), key)
       .then((made) => { pending.made = made; })
       .catch((err) => log(`league code failed: ${err.message}`));
   }
 
   async shareLeague() {
-    const made = this.league?.rev === lb.historyRevision() ? this.league.made : null;
+    const fresh = this.league?.rev === lb.historyRevision() && this.league.key === cloud.leagueKey();
+    const made = fresh ? this.league.made : null;
     if (!made) {
       this.prepareLeague();
       this.screens.toast('Packing the league — tap again in a moment');
@@ -1628,19 +1652,21 @@ class App {
       this.screens.toast('No league code in there', 'bad');
       return;
     }
-    let recs;
+    let got;
     try {
-      recs = await league.readLeague(code);
+      got = await league.readLeague(code);
     } catch (err) {
       this.screens.toast(`Can't read that league: ${err.message}`, 'bad');
       return;
     }
-    const added = lb.mergeMatches(recs);
+    const recs = got.records;
+    const added = lb.mergeMatches(recs, 'import');
     log(`league import: ${recs.length} in the code, ${added} new`);
     this.screens.toast(added
       ? `Added ${added} match${added === 1 ? '' : 'es'}`
       : `Nothing new — you already had all ${recs.length}`, added ? 'good' : '');
     this.go('board', { tab: 'standings' });
+    if (got.key) this.cloudSeen(got.key, 'the league\'s cloud sync');
   }
 
   /** The history as CSV for a bug report or balance discussion; names hidden unless asked. */
@@ -1658,6 +1684,88 @@ class App {
       this.screens.revealText(text);
       this.screens.toast('Selected — long-press to copy');
     }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Cloud league sync (optional)                                        */
+
+  /**
+   * Sync with the cloud league in a moment — never mid-match, where it waits
+   * for the menus. Every reason to sync comes through here: the page opening
+   * or coming back, a match landing on this phone, the leaderboard opening,
+   * the network returning. A burst of them makes one sync.
+   */
+  requestSync(delay = 1500) {
+    if (!cloud.leagueKey() || !cloud.cloudReady()) return;
+    clearTimeout(this.cloudTimer);
+    this.cloudTimer = setTimeout(() => this.runSync(), delay);
+  }
+
+  /** requestSync, if the last good sync is older than `age`. */
+  syncIfStale(age, delay) {
+    const s = cloud.cloudStatus();
+    if (s.key && Date.now() - s.at > age) this.requestSync(delay);
+  }
+
+  async runSync() {
+    // Mid-match, or one sync already under way (whose result is its
+    // caller's to report): ask again in a while.
+    if (this.mode === 'match' || cloud.cloudStatus().syncing) { this.requestSync(5000); return; }
+    // The 'online' event asks again.
+    if (!navigator.onLine) return;
+    this.screens.tickCloud();
+    const r = await cloud.syncLeague(() => this.mode === 'match');
+    if (r.failure) {
+      // Once per losing streak: on a WiFi with no internet every try fails.
+      if (!this.cloudBackoff) log(`cloud: sync failed (${r.failure})`);
+      this.cloudBackoff = Math.min(this.cloudBackoff * 2 || SYNC_RETRY, SYNC_RETRY_CAP);
+      this.requestSync(this.cloudBackoff);
+    } else {
+      if (this.cloudBackoff) log('cloud: synced again');
+      this.cloudBackoff = 0;
+    }
+    if (r.up || r.added) log(`cloud: ${r.up} sent, ${r.down} fetched, ${r.added} new`);
+    // New matches change every table; otherwise only the sync lines move,
+    // and redrawing the whole board for them would flash it.
+    if (r.added && this.mode !== 'match') {
+      this.screens.toast(`${r.added} new match${r.added === 1 ? '' : 'es'} from the cloud league`, 'good');
+      this.refreshBoard();
+      this.refreshLobby();
+    } else {
+      this.screens.tickCloud();
+    }
+  }
+
+  refreshBoard() {
+    if (this.screens.current === 'board') this.screens.refresh();
+  }
+
+  /**
+   * A friend's phone syncs with a cloud league: its hello said so, or a
+   * league code it shared did. A phone in no league joins — that is how a
+   * group ends up in one without anyone typing a key. A phone in another
+   * league, or whose player left cloud sync, is only offered it on the
+   * leaderboard. `label` names the league for those words.
+   */
+  cloudSeen(key, label) {
+    if (!cloud.cloudReady() || !cloud.validKey(key) || key === cloud.leagueKey()) return;
+    if (cloud.leagueKey() || cloud.cloudStatus().off) {
+      this.cloudOffer = { key, label };
+      this.screens.tickCloud();
+      return;
+    }
+    cloud.joinLeague(key);
+    log('cloud: joined a friend\'s league');
+    this.cloudJoined(`Joined ${label}`);
+  }
+
+  /** In a league from now on — joined or started: send everything, fetch everything. */
+  cloudJoined(note) {
+    this.cloudOffer = null;
+    this.cloudBackoff = 0;
+    this.screens.toast(note, 'good');
+    this.requestSync(300);
+    this.refreshBoard();
   }
 
   stopScanner() {
@@ -1687,7 +1795,10 @@ class App {
         this.go('title');
         break;
       case 'howto': this.go('howto'); break;
-      case 'board': this.go('board', { tab: 'standings' }); break;
+      case 'board':
+        this.go('board', { tab: 'standings' });
+        this.syncIfStale(SYNC_FRESH, 300);
+        break;
       case 'board-tab': this.go('board', { tab: data.tab }); break;
       // Unfolding a hero or widening the balance filter stays on the same
       // board, so it skips go() and its log line.
@@ -1703,7 +1814,8 @@ class App {
       }
       case 'wipe':
         if (confirm('Erase all match history on this phone? Friends who hold these matches '
-          + 'will pass them back the next time you connect.')) {
+          + 'will pass them back the next time you connect.'
+          + (cloud.leagueKey() ? ' The cloud league keeps its copy.' : ''))) {
           lb.clearHistory();
           this.screens.refresh();
           this.screens.toast('History cleared');
@@ -1717,6 +1829,33 @@ class App {
         if (v?.trim()) this.importLeague(v);
         break;
       }
+      case 'cloud-start':
+        cloud.startLeague();
+        log('cloud: started a league');
+        this.cloudJoined('Cloud league started — friends join by playing you');
+        break;
+      case 'cloud-join': {
+        const offer = this.cloudOffer;
+        if (!offer) break;
+        cloud.joinLeague(offer.key);
+        log('cloud: joined a friend\'s league');
+        this.cloudJoined(`Joined ${offer.label}`);
+        break;
+      }
+      case 'cloud-sync':
+        clearTimeout(this.cloudTimer);
+        this.runSync();
+        break;
+      case 'cloud-leave':
+        if (confirm('Stop syncing this phone with the cloud league? Its matches stay on this phone, '
+          + 'and what the league already holds stays there.')) {
+          cloud.leaveLeague();
+          clearTimeout(this.cloudTimer);
+          log('cloud: left the league');
+          this.screens.toast('Cloud sync off');
+          this.refreshBoard();
+        }
+        break;
       case 'toggle-music':
         this.profile.music = !this.profile.music;
         audio.setMusic(this.profile.music);

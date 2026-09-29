@@ -6,7 +6,9 @@
 // is just a union — no conflicts, no clock to argue about, and both friends
 // end up looking at exactly the same table. Every phone passes on everything
 // it holds, matches between other friends included, so a group that mixes
-// partners converges on one league.
+// partners converges on one league. Cloud sync (cloud.js), where a group turns
+// it on, is one more way in for the same records; the phone's own copy stays
+// the one the tables are read from.
 
 const KEY = 'rogupong.matches.v1';
 const PROFILE_KEY = 'rogupong.profile.v1';
@@ -52,6 +54,12 @@ function write(list) {
 
 /** Changes whenever the history does, so a copy made from it can tell it is stale. */
 export const historyRevision = () => revision;
+
+// Told the ids of matches as they land on this phone, and where they came
+// from — cloud sync queues everything that didn't come from the cloud.
+const arrivals = [];
+export const onNewMatches = (fn) => arrivals.push(fn);
+const announce = (ids, from) => { for (const fn of arrivals) fn(ids, from); };
 
 /**
  * Cosmetic flair, earned by playing. Unlocks are COMPUTED from the match
@@ -145,6 +153,7 @@ export function recordMatch(rec) {
   if (!list.some((r) => matchId(r) === matchId(rec))) {
     list.push(rec);
     write(list);
+    announce([rec.id], 'match');
   }
   return rec;
 }
@@ -167,13 +176,14 @@ function sane(rec) {
 
 /**
  * Union of local history with records from elsewhere, keeping ours
- * authoritative on ties. Returns how many new matches it kept.
+ * authoritative on ties. `from` says where they came from ('peer', 'import'
+ * or 'cloud'). Returns how many new matches it kept.
  */
-export function mergeMatches(incoming) {
+export function mergeMatches(incoming, from = 'peer') {
   if (!Array.isArray(incoming)) return 0;
   const list = read();
   const seen = new Set(list.map(matchId));
-  const fresh = [];
+  let fresh = [];
   for (const rec of incoming) {
     if (!sane(rec) || seen.has(rec.id)) continue;
     seen.add(rec.id);
@@ -183,12 +193,15 @@ export function mergeMatches(incoming) {
   if (!fresh.length) return 0;
   list.sort((a, b) => (a.at || 0) - (b.at || 0));
   write(list);
-  if (list.length <= MAX_RECORDS) return fresh.length;
   // Past the cap the oldest fall off again, and a match that came in only to
   // be trimmed is no news — otherwise a full phone would announce the same
   // old matches on every connect.
-  const kept = new Set(read().map(matchId));
-  return fresh.filter((id) => kept.has(id)).length;
+  if (list.length > MAX_RECORDS) {
+    const kept = new Set(read().map(matchId));
+    fresh = fresh.filter((id) => kept.has(id));
+  }
+  if (fresh.length) announce(fresh, from);
+  return fresh.length;
 }
 
 /** Aggregate standings, one row per player name. */

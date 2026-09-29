@@ -23,8 +23,9 @@ players' hands.
 pong. Rallies are the best part right up until they are the worst part, so the
 game applies pressure until someone wins the point (§4).
 
-**Nothing outlives the match except the leaderboard.** No accounts, no cloud,
-no telemetry. The only thing that persists is who beat whom.
+**Nothing outlives the match except the leaderboard.** No accounts, no
+telemetry, and no cloud unless a group of friends turns one on for its league
+(§8). The only thing that persists is who beat whom.
 
 ---
 
@@ -751,7 +752,7 @@ no internet.
 
 ---
 
-## 8. The leaderboard without a server
+## 8. The leaderboard, and the optional cloud
 
 Each phone keeps its own list of finished matches in `localStorage`. Records
 are immutable and carry a random id, so when two phones connect they simply
@@ -786,6 +787,58 @@ message included, and merges it exactly like a connect does: nothing is
 replaced or removed. The code is packed as the leaderboard opens rather than
 on the tap, because the share sheet only opens inside the tap's user gesture
 and some browsers let that lapse across the await that deflating takes.
+
+**Cloud sync, the optional extra.** The pass-along league only moves when
+phones meet or someone pastes a code. Cloud sync closes that gap for a group
+that wants it. A small Cloudflare Worker (`cloud/worker.js`, with deploy notes
+in `cloud/README.md`) keeps one copy of a league's records. Every phone in the
+league sends it the matches it gains and fetches the ones it lacks whenever it
+is online. It is the project's only server, and nothing depends on it. The
+phone's own history is still what the tables are read from. The cloud only
+ever adds to it, through the same merge a connect uses, so with no internet, or
+no Worker deployed, the game plays exactly as before. A build with no Worker
+address (`ENDPOINT` in `js/data/cloud.js`) doesn't mention cloud sync at all.
+
+*No accounts.* A league is a random 80-bit key, 16 Base32 characters, and
+whoever holds it is in. Someone starts one from the leaderboard, and from then
+on the key spreads the way matches do. It rides in `hello`, and a phone in no
+league joins its friend's, so a group ends up in one league without anyone
+typing anything. It rides inside a shared league code too, so Import league
+joins it. A phone already in another league isn't moved, and neither is one
+whose player left cloud sync: the leaderboard offers the friend's league
+instead. Leaving stops the syncing and keeps the matches.
+
+*The sync.* Each league is one Durable Object with its own SQLite table:
+records keyed by match id, `INSERT OR IGNORE`, numbered in arrival order. A
+phone keeps a cursor, the last row it fetched. It also keeps an outbox: the ids
+of matches that reached it other than from the cloud (played, merged on a
+connect, imported). One request sends up to 500 from the outbox and fetches up
+to 500 after the cursor, and a sync repeats that until both are done. While a
+phone is behind it only fetches, since whatever it sent would come back in a
+later page. A phone that is caught up has its cursor moved past what it just
+added, so its own records never echo back. What arrives is merged once at the
+end, in one storage write, and only then does the cursor move, so a sync cut
+short fetches the rest next time. A cursor past the league's end means the
+league was lost or moved. The Worker says so, the phone sends everything
+again, and the league rebuilds itself from its phones. Requests go as
+plain-text JSON, which a browser sends across origins without a preflight.
+
+*When.* A phone syncs shortly after the page opens and whenever a match lands
+on it. It also syncs when the leaderboard opens (if the last sync is over 30 s
+old), when the page comes back after 10 minutes, and when the network returns.
+Each waits a moment, so a burst of them makes one request. A sync never runs
+mid-match: one due then waits for the menus. A failed sync is tried again after
+30 s, the wait doubling to 10 minutes. A WiFi with no internet behind it, which
+is where the game is often played, fails every time. It says so only on the
+leaderboard ("Couldn't sync"), and once in the diagnostics. The diagnostics
+line says whether the phone is in a league and how fresh and big it is, but
+never the key, since reports get pasted into public issues.
+
+*Why a Worker.* The research for this (issue #29) compared Dropbox, OneDrive,
+Google Drive and a GitHub gist. Each needed every player to sign in, or a
+script from the provider, or a token that can't safely sit in a public page. A
+Worker with no accounts needs nothing from the players. The free plan covers
+a group of friends many times over (`cloud/README.md` has the numbers).
 
 **Hero stats.** The Heroes tab shows each hero's wins, losses, win rate and
 share of points won, strongest first. Mirror matches are left out — they say
@@ -829,9 +882,11 @@ anti-cheat — a guest claims whatever flair it likes and the host draws it,
 because the threat model is two kids on a sofa.
 
 **Known limits, accepted.** The same threat model covers the league: a faked
-record spreads to everyone just as a real one does. And Clear only empties
-this phone — the next connect or import brings back whatever friends still
-hold.
+record spreads to everyone just as a real one does, and with cloud sync anyone
+holding the key can add one without connecting. Clear only empties this phone.
+The next connect or import brings back whatever friends still hold, and the
+cloud league keeps its copy. Leaving the cloud league stops a phone syncing,
+but takes nothing back out of the league.
 
 ---
 
@@ -859,6 +914,8 @@ hold.
 | Any drop | Link Lost (or the Reconnecting banner) says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
 | A match history too long for one message | Streamed after `hello` in paced chunks; a drop mid-stream keeps what arrived |
 | A league code too long for a chat message | It carries the newest matches that fit, and says so |
+| No internet, or the cloud Worker is down or over its limits | Cloud sync fails quietly and tries again later; the leaderboard says it couldn't sync, and nothing else changes (§8) |
+| The cloud league is lost or wiped | Each phone's cursor runs past its end; the Worker says so, the phone sends everything it holds, and the league rebuilds itself |
 | A snapshot arrives late | Discarded by tick number |
 | The radio backs up mid-match | Superseded state packets are dropped at the source, not queued |
 | The special press is dropped | It cannot be — it travels on the reliable channel |
@@ -987,7 +1044,9 @@ compositor — a real slice of touch-to-paddle latency on Android.
   server could carry the codes so no one has to paste. Either is a server to
   run or pay for. Online play (§6) accepts that some pairs can't connect and
   says so, and guides the paste instead. Both get revisited if failed
-  connections or the paste turn out to be what stops people playing.
+  connections or the paste turn out to be what stops people playing. The
+  cloud league's Worker (§8) doesn't change that: it holds finished matches,
+  and nothing a live match waits on.
 - **No ICE restart.** Renegotiating over the old connection only helps when it
   is still partly up. The grace periods of §9 already ride out most of those,
   and a drop goes straight back into a fresh handshake (§6).
