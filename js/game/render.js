@@ -6,7 +6,7 @@
 // so you are always the paddle at the bottom.
 
 import { drawText, measure } from '../ui/pixelfont.js';
-import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, ballRadius } from './match.js';
+import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, AEGIS_HALF, ballRadius } from './match.js';
 import { itemById } from './items.js';
 
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
@@ -434,7 +434,7 @@ export class Renderer {
 
     this.drawBackdrop(stage, time, true);
     this.drawCourt(m, stage, flip, chars, view, time);
-    this.drawProps(m, flip, time);
+    this.drawProps(m, flip, time, chars);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
     this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time);
@@ -645,15 +645,72 @@ export class Renderer {
   }
 
   /**
-   * SPIRE pinnacles and AVALANCHE snowdrifts. Both are cached pixel sprites;
-   * rising and crumbling are just how much of the sprite shows above the
-   * floor, so a prop costs a couple of blits in either quality.
+   * SPIRE pinnacles, AVALANCHE snowdrifts and GU's midline wall. The first
+   * two are cached pixel sprites; rising and crumbling are just how much of
+   * the sprite shows above the floor, so a prop costs a couple of blits in
+   * either quality. The wall is the AEGIS barrier's flat fills.
    */
-  drawProps(m, flip, time) {
+  drawProps(m, flip, time, chars) {
     if (!m.props || !m.props.length) return;
     for (const q of m.props) {
       if (q.kind === 'spire') this.drawSpire(q, flip, time);
       else if (q.kind === 'drift') this.drawDrift(q, flip, time);
+      else if (q.kind === 'wall') this.drawWall(q, flip, time, chars);
+    }
+  }
+
+  /**
+   * GU's midline wall: the AEGIS barrier again, fading in as it rises, with
+   * chevrons pointing the way it sends balls — it only stops the ones coming
+   * the other way, so GU's own shots sail through. Blinks through its last
+   * second, like the barrier.
+   */
+  drawWall(q, flip, time, chars) {
+    if (q.t < 1 && Math.floor(time * 8) % 2) return;
+    const ch = chars[q.p] || chars[0];
+    // Owner 0's wall faces up the court, and the view flips that.
+    const face = (q.p === 0) !== flip ? -1 : 1;
+    this.ctx.save();
+    this.ctx.globalAlpha = Math.min(1, 0.35 + this.propStanding(q));
+    this.drawBarrier(q.x, q.size, q.y, flip, ch, face);
+    this.ctx.restore();
+  }
+
+  /**
+   * A band of light across part of the court — AEGIS behind the paddle, or
+   * the midline wall — with end posts, so a barrier short of the walls reads
+   * as having edges. `face` (screen up -1, down 1) turns its pips into
+   * chevrons.
+   */
+  drawBarrier(cx, half, y, flip, ch, face = 0) {
+    const ctx = this.ctx;
+    const [x0, sy] = this.pt(cx - half, y, flip);
+    const w = half * 2 * this.court.w;
+    ctx.fillStyle = this.grad(`shield:${sy}:${ch.color2}`, () => {
+      const grad = ctx.createLinearGradient(0, sy - 8, 0, sy + 8);
+      grad.addColorStop(0, ch.color2 + '00');
+      grad.addColorStop(0.5, ch.color2 + 'dd');
+      grad.addColorStop(1, ch.color2 + '00');
+      return grad;
+    });
+    ctx.fillRect(x0, sy - 8, w, 16);
+    ctx.fillStyle = ch.color2;
+    const n = Math.max(3, Math.round(14 * half * 2));
+    for (let k = 0; k < n; k++) {
+      const px = Math.round(x0 + (k + 0.5) * (w / n));
+      if (!face) ctx.fillRect(px - 2, sy - 2, 4, 4);
+      else {
+        // Three rows of 2 px blocks: the tip, then two pairs spreading back.
+        for (let r = 0; r < 3; r++) {
+          const ry = sy - 1 + face * (2 - r * 2);
+          if (r === 0) ctx.fillRect(px - 1, ry, 2, 2);
+          else { ctx.fillRect(px - 1 - r * 2, ry, 2, 2); ctx.fillRect(px - 1 + r * 2, ry, 2, 2); }
+        }
+      }
+    }
+    if (half < 0.5) {
+      ctx.fillRect(Math.round(x0), sy - 6, 2, 12);
+      ctx.fillRect(Math.round(x0 + w) - 2, sy - 6, 2, 12);
     }
   }
 
@@ -993,18 +1050,11 @@ export class Renderer {
       }
       if (ready) this.drawReadyPips(sx, courtY, w, h, outward, ch, time);
 
-      if (p.shield > 0) {
-        const [, shy] = this.pt(0.5, SHIELD_Y[i], flip);
-        ctx.fillStyle = this.grad(`shield:${shy}:${ch.color2}`, () => {
-          const grad = ctx.createLinearGradient(0, shy - 8, 0, shy + 8);
-          grad.addColorStop(0, ch.color2 + '00');
-          grad.addColorStop(0.5, ch.color2 + 'dd');
-          grad.addColorStop(1, ch.color2 + '00');
-          return grad;
-        });
-        ctx.fillRect(c.x, shy - 8, c.w, 16);
-        ctx.fillStyle = ch.color2;
-        for (let k = 0; k < 14; k++) ctx.fillRect(c.x + (k + 0.5) * (c.w / 14) - 2, shy - 2, 4, 4);
+      // AEGIS, blinking through its last second. An older host's barrier
+      // comes without a position: it spans the whole goal.
+      if (p.shield > 0 && (p.shield > 1 || Math.floor(time * 8) % 2 === 0)) {
+        const whole = p.shieldX == null;
+        this.drawBarrier(whole ? 0.5 : p.shieldX, whole ? 0.5 : AEGIS_HALF, SHIELD_Y[i], flip, ch);
       }
     }
   }

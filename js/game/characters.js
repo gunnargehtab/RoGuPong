@@ -9,7 +9,8 @@
 // tab can show win rates "since the last patch". Bump it with any change that
 // could shift who wins: a hero's numbers here, or how a special plays out in
 // match.js. The host's number is the one recorded — its build runs the match.
-export const BALANCE = 1;
+// DESIGN.md §3 keeps what each version changed, and why.
+export const BALANCE = 2;
 
 export const CHARACTERS = [
   {
@@ -37,15 +38,15 @@ export const CHARACTERS = [
     blurb: 'A wall with opinions. Wide paddle, patient game.',
     paddle: 1.35,
     speed: 0.85,
-    meterRate: 1.10,
+    meterRate: 0.95,
     color: '#3da5ff',
     color2: '#9df3ff',
     trail: '#5fd9ff',
     special: {
       id: 'aegis',
       name: 'AEGIS',
-      desc: 'A barrier guards your goal. It saves one ball, then shatters.',
-      duration: 6.0,
+      desc: 'A barrier guards the goal where you stand for six seconds. Fire again in the same point for a midline wall.',
+      duration: 6.0,     // how long the barrier, and the midline wall, stand
     },
   },
   {
@@ -80,8 +81,8 @@ export const CHARACTERS = [
     special: {
       id: 'quake',
       name: 'QUAKE',
-      desc: 'A shockwave slams every ball back and bogs down your rival.',
-      duration: 2.5,
+      desc: 'A shockwave slams every ball on their side back at them and bogs down your rival.',
+      duration: 1.0,     // how long the rival's paddle is bogged down
     },
   },
   {
@@ -89,8 +90,8 @@ export const CHARACTERS = [
     name: 'MAG',
     title: 'The Junkyard Magnet',
     blurb: 'Patient scavenger. Catches what you throw and throws it back harder.',
-    paddle: 1.05,
-    speed: 0.92,
+    paddle: 1.12,
+    speed: 1.00,
     meterRate: 1.00,
     color: '#3ddc84',
     color2: '#b8ffd9',

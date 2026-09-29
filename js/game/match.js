@@ -27,6 +27,8 @@ export const SPIRE_R = 0.06;             // court widths
 export const SPIRE_Y = [0.70, 0.30];     // by the victim: the middle of their half
 export const DRIFT_Y = [0.978, 0.022];   // on each goal line, behind the shield
 export const DRIFT_HALF = 0.18;
+export const AEGIS_HALF = 0.2;           // AEGIS covers 0.4 of the goal — and so does GU's midline wall
+export const WALL_Y = 0.5;
 
 const BASE_SPEED = 0.62;      // court heights per second
 const MAX_SPEED = 1.75;
@@ -43,12 +45,16 @@ const CRATE_EVERY_PARTY = [2.4, 4.0];
 const MAX_CRATES_PARTY = 3;
 const METER_PER_HIT = 0.17;
 const METER_PER_SEC = 0.022;
-const MAGNET_HOLD = 1.0;      // seconds a caught ball sits on the paddle
+const MAGNET_HOLD = 0.6;      // seconds a caught ball sits on the paddle
+const MAGNET_REACH = 1.6;     // half-widths out a magnetic paddle catches (a bounce: 1.12)
+const MAGNET_FLING = 1.45;    // speed-up on the fling
 const PHANTOM_GHOST = 3.0;    // seconds of ghost on a PHANTOM return
 const ARCO_K = 2.2;           // inward spin on an ARCO return, at serve pace
 const ARCO_POW = 1.75;        // ... scaled by pace^this, so the arch keeps its shape
 const ARCO_MIN = 0.15;        // radians off straight before a return bends at all
-const SPIRE_MIN_VY = 0.35;    // share of the speed a spire bounce leaves vertical
+const MIN_VY = 0.35;          // share of its speed every free ball keeps heading for a goal
+const LEAN_K = 0.55;          // a ball flatter than this share (~57°) travels faster ...
+const LEAN_MAX = 1.6;         // ... by up to this much, never past the rally's top speed
 const DRIFT_HITS = 2;         // blocks before a snowdrift is spent
 const DRIFT_DAMP = 0.88;      // speed kept by a ball the snow sends back
 
@@ -96,6 +102,7 @@ function makeBall(x, y, angle, speed, owner) {
     beach: 0,       // seconds of huge-and-floaty left
     mirror: 0,      // seconds of REFLECTION decoy left
     arc: false,     // the spin it carries is an ARCO bend (host only)
+    flung: false,   // off a MAGNET fling, until the next paddle touch (host only)
     held: -1,       // player index holding it on a magnetic paddle, or -1
     holdT: 0,
     hx: 0,          // offset from the holding paddle's centre
@@ -114,6 +121,8 @@ export class Match {
     this.names = opts.names || ['P1', 'P2'];
     // The stage's crate pool, as item ids; null deals every item.
     this.items = Array.isArray(opts.items) && opts.items.length ? [...opts.items] : null;
+    // GU's midline wall, off against a phone whose build can't draw it.
+    this.midline = opts.midline !== false;
 
     this.tick = 0;
     this.time = 0;
@@ -134,7 +143,9 @@ export class Match {
       grow: 0,
       frost: 0,
       shrink: 0,
-      shield: 0,
+      shield: 0,          // seconds the AEGIS barrier has left
+      shieldX: 0.5,       // ... and where it stands: centred where GU was
+      aegis: 0,           // AEGIS presses this point — the second raises the midline wall
       magnet: 0,          // seconds the paddle stays magnetic, waiting for a ball
       arco: 0,            // seconds of ARCO left: returns bend back in
       pending: null,      // 'afterburn' | 'curve' armed for the next hit
@@ -143,8 +154,8 @@ export class Match {
 
     this.balls = [];
     this.crates = [];
-    // Stage props raised by items: SPIRE pinnacles and AVALANCHE snowdrifts,
-    // { kind: 'spire' | 'drift', x, y, size, t: seconds left, age, p: owner, hits }.
+    // Stage props: SPIRE pinnacles, AVALANCHE snowdrifts and GU's midline wall,
+    // { kind: 'spire' | 'drift' | 'wall', x, y, size, t: seconds left, age, p: owner, hits }.
     this.props = [];
     this.nextCrate = this.rollCrateDelay();
     this.input = [{ x: 0.5, special: false }, { x: 0.5, special: false }];
@@ -169,6 +180,45 @@ export class Match {
   paddleSpeed(i) {
     const p = this.paddles[i];
     return PADDLE_SPEED * this.chars[i].speed * (p.frost > 0 ? 0.5 : 1);
+  }
+
+  /** The rally's speed ceiling: rally heat lifts it the longer a point runs. */
+  topSpeed() {
+    return MAX_SPEED * (1 + Math.min(0.35, this.rally * 0.006));
+  }
+
+  /**
+   * How much faster than its speed a flat ball travels. Past ~57° off
+   * straight a ball spends most of its time crossing the court sideways, so
+   * it leans on: its speed toward the goal never drops below LEAN_K of its
+   * speed. The path and the wall bounces stay the same; the ball just gets
+   * there sooner — never faster than the rally's ceiling (or a beach ball's),
+   * so only slow balls get help. A MAGNET fling keeps its tuned pace until the
+   * next paddle touch, and an ARCO bend its tuned shape.
+   */
+  lean(b) {
+    if (b.held >= 0 || b.flung || b.arc) return 1;
+    const s = Math.hypot(b.vx, b.vy);
+    const up = s ? Math.abs(b.vy) / s : 1;
+    if (up >= LEAN_K) return 1;
+    const top = b.beach > 0 ? BASE_SPEED * 1.15 : this.topSpeed();
+    return clamp(Math.min(LEAN_K / up, top / s), 1, LEAN_MAX);
+  }
+
+  /**
+   * Every free ball keeps heading for a goal: at least MIN_VY of its speed
+   * vertical, so nothing rattles wall to wall for half a minute. CURVE bends
+   * a ball toward flat, multiball fans extras out around an already flat
+   * heading, a return can leave at 72° — this is the floor under all of it.
+   * `dir` picks the way when it matters (a spire sends it away from itself);
+   * otherwise the ball keeps going the way it was.
+   */
+  keepHeading(b, dir = 0) {
+    const s = Math.hypot(b.vx, b.vy);
+    const min = MIN_VY * s;
+    if (!s || Math.abs(b.vy) >= min) return;
+    b.vy = (dir || Math.sign(b.vy) || (b.owner === 1 ? 1 : -1)) * min;
+    b.vx = (Math.sign(b.vx) || 1) * Math.sqrt(s * s - min * min);
   }
 
   // Local fx (drainEvents) and the network (snapshot) each get their own copy;
@@ -213,6 +263,7 @@ export class Match {
       p.grow = Math.max(0, p.grow - dt);
       p.frost = Math.max(0, p.frost - dt);
       p.shrink = Math.max(0, p.shrink - dt);
+      p.shield = Math.max(0, p.shield - dt);
       p.magnet = Math.max(0, p.magnet - dt);
       p.arco = Math.max(0, p.arco - dt);
       if (p.pending && p.pending.until <= this.time) p.pending = null;
@@ -306,10 +357,12 @@ export class Match {
         b.vx = (b.vx / mag) * b.speed;
         b.vy = (b.vy / mag) * b.speed;
       }
+      this.keepHeading(b);
 
-      const x0 = b.x, y0 = b.y;           // props test the whole step's path
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
+      const x0 = b.x, y0 = b.y;           // props and shields test the whole step's path
+      const lean = this.lean(b);
+      b.x += b.vx * lean * dt;
+      b.y += b.vy * lean * dt;
 
       // Side walls
       if (b.x < rad && b.vx < 0) {
@@ -322,7 +375,7 @@ export class Match {
 
       for (let i = 0; i < 2; i++) {
         this.collidePaddle(b, i);
-        this.collideShield(b, i);
+        this.collideShield(b, i, x0, y0);
       }
       if (this.props.length) this.collideProps(b, x0, y0, true);
       this.collideCrates(b);
@@ -347,10 +400,12 @@ export class Match {
     const p = this.paddles[i];
     const half = this.paddleWidth(i) / 2;
     const offset = (b.x - p.x) / half;
-    if (Math.abs(offset) > 1.12) return;         // edge whiff
+    // Edge whiff — though a magnetic paddle pulls in a ball a little wider.
+    if (Math.abs(offset) > (p.magnet > 0 ? MAGNET_REACH : 1.12)) return;
+    b.flung = false;
 
     // A magnetic paddle catches instead of bouncing. The catch counts as the
-    // return; the fling a second later is the aimed part.
+    // return, meter and all; the fling a moment later is the aimed part.
     if (p.magnet > 0) {
       p.magnet = 0;
       b.held = i;
@@ -365,6 +420,7 @@ export class Match {
       b.owner = i;
       this.rally++;
       this.bestRally = Math.max(this.bestRally, this.rally);
+      this.meter[i] = clamp(this.meter[i] + METER_PER_HIT * this.chars[i].meterRate, 0, 1);
       this.hitstop = 0.06;
       this.shake = Math.max(this.shake, 0.5);
       this.event({ t: 'catch', x: b.x, y: b.y, p: i });
@@ -384,9 +440,8 @@ export class Match {
 
     // Rally heat: the longer a point runs, the harder the ball comes back, so
     // even two immovable defences eventually produce a winner.
-    const heat = Math.min(0.35, this.rally * 0.006);
     const speedup = SPEEDUP + Math.min(0.05, this.rally * 0.0015);
-    b.speed = Math.min(MAX_SPEED * (1 + heat), b.speed * speedup);
+    b.speed = Math.min(this.topSpeed(), b.speed * speedup);
     // A beach ball stays floaty however long the rally runs; only a special
     // (afterburn below) is allowed to punch through the cap.
     if (b.beach > 0) b.speed = Math.min(b.speed, BASE_SPEED * 1.15);
@@ -419,6 +474,7 @@ export class Match {
     const dir = i === 0 ? -1 : 1;                // away from this player's goal
     b.vx = Math.sin(angle) * b.speed;
     b.vy = Math.cos(angle) * b.speed * dir;
+    this.keepHeading(b);                         // so the flattest leave at ~70°, not 72°
 
     // ARCO: inward spin, so a wide return swings out and arches back in.
     // Scaled by how wide the shot is — a straight one barely bends — and by
@@ -450,19 +506,13 @@ export class Match {
     b.spin = 0;
   }
 
-  collideShield(b, i) {
+  /** AEGIS: 0.4 of the goal, centred where GU stood — a ball wide of it is a goal. */
+  collideShield(b, i, x0, y0) {
     const p = this.paddles[i];
     if (p.shield <= 0) return;
-    const sy = SHIELD_Y[i];
-    const towardMe = i === 0 ? b.vy > 0 : b.vy < 0;
-    if (!towardMe) return;
-    const rad = ballRadius(b);
-    const crossed = i === 0 ? b.y >= sy - rad : b.y <= sy + rad;
-    if (!crossed) return;
+    if (!this.bounceLine(b, x0, y0, SHIELD_Y[i], p.shieldX, AEGIS_HALF, i === 0)) return;
 
     p.shield = 0;
-    b.y = i === 0 ? sy - rad : sy + rad;
-    b.vy = -b.vy;
     b.owner = i;
     this.endArc(b);
     b.speed = Math.min(MAX_SPEED, b.speed * 1.05);
@@ -481,17 +531,34 @@ export class Match {
     for (let pi = this.props.length - 1; pi >= 0; pi--) {
       const q = this.props[pi];
       // A kind this build doesn't know (a newer host) is left alone, not
-      // bounced off as if it were a snowdrift.
+      // bounced off as if it were a snowdrift. Drift and wall are both one-way
+      // lines guarding their owner's goal.
       const hit = q.kind === 'spire' ? this.bounceSpire(b, q, x0, y0)
-        : q.kind === 'drift' ? this.bounceDrift(b, q, x0, y0) : false;
+        : q.kind === 'drift' || q.kind === 'wall' ? this.bounceLine(b, x0, y0, q.y, q.x, q.size, q.p === 0)
+          : false;
       if (!hit) continue;
       bounced = true;
       this.endArc(b);
+      if (q.kind === 'wall') b.spin = 0;           // a block ends a CURVE too
       if (!live) continue;
       q.hits++;
       if (q.kind === 'spire') {
         this.shake = Math.max(this.shake, 0.35);
         this.event({ t: 'bump', k: 'spire', x: b.x, y: b.y, p: q.p });
+        continue;
+      }
+      if (q.kind === 'wall') {
+        // A save, not a counter-attack: bounced back from the midline the
+        // rival would have half the court to react in, so the ball leaves at
+        // serve pace. It is GU's ball now, with no rally or meter credit —
+        // the same terms as the barrier. One save, then it is gone.
+        b.owner = q.p;
+        b.speed = Math.min(b.speed, BASE_SPEED);
+        b.fire = 0;
+        this.renormalise(b);
+        this.shake = Math.max(this.shake, 0.7);
+        this.event({ t: 'bump', k: 'wall', x: b.x, y: q.y, p: q.p });
+        this.dropProp(q);
         continue;
       }
       // The snow takes the sting out of it, and the save counts as the
@@ -550,28 +617,28 @@ export class Match {
     this.renormalise(b);                            // same speed as it arrived
     // A glancing hit could send it off nearly flat, to ping-pong between the
     // spire and a wall; keep it heading somewhere, away from the spire.
-    const minVy = SPIRE_MIN_VY * b.speed;
-    if (Math.abs(b.vy) < minVy) {
-      b.vy = (Math.sign(ny) || Math.sign(b.vy) || 1) * minVy;
-      b.vx = (Math.sign(b.vx) || 1) * Math.sqrt(b.speed * b.speed - minVy * minVy);
-    }
+    this.keepHeading(b, Math.sign(ny));
     return true;
   }
 
-  /** A snowdrift is a line across part of its owner's goal, facing the court. */
-  bounceDrift(b, q, x0, y0) {
-    const down = q.p === 0;                          // guarding the bottom goal
+  /**
+   * A one-way line across part of the court at height `ly`, `half` either
+   * side of `cx`, facing away from the goal it guards (`down`: the bottom
+   * one). An AEGIS barrier, a snowdrift and GU's midline wall are all this.
+   * Only a ball heading for that goal and crossing the line this step
+   * bounces: one already behind it is past saving.
+   */
+  bounceLine(b, x0, y0, ly, cx, half, down) {
     if (down ? b.vy <= 0 : b.vy >= 0) return false;
     const rad = ballRadius(b);
     const lead0 = down ? y0 + rad : y0 - rad;
     const lead1 = down ? b.y + rad : b.y - rad;
-    // Only a ball crossing the line this step: one already behind it is a goal.
-    if (down ? lead0 > q.y || lead1 < q.y : lead0 < q.y || lead1 > q.y) return false;
-    const f = lead1 !== lead0 ? (q.y - lead0) / (lead1 - lead0) : 1;
+    if (down ? lead0 > ly || lead1 < ly : lead0 < ly || lead1 > ly) return false;
+    const f = lead1 !== lead0 ? (ly - lead0) / (lead1 - lead0) : 1;
     const xc = x0 + (b.x - x0) * f;
-    if (Math.abs(xc - q.x) > q.size + rad * 0.5) return false;
+    if (Math.abs(xc - cx) > half + rad * 0.5) return false;
     b.x = clamp(xc, rad, 1 - rad);
-    b.y = down ? q.y - rad : q.y + rad;
+    b.y = down ? ly - rad : ly + rad;
     b.vy = -b.vy;
     return true;
   }
@@ -612,7 +679,11 @@ export class Match {
           // down it. (They used to be flipped toward the bottom goal whenever
           // the ball was heading up, turning the host's own multiball on them.)
           const angle = Math.atan2(ball.vx, ball.vy) + sign * 0.42;
-          this.balls.push(makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner));
+          const extra = makeBall(ball.x, ball.y, angle, ball.speed * 0.94, owner);
+          // Fanned out from an already flat heading, one could leave flatter
+          // than any return.
+          this.keepHeading(extra);
+          this.balls.push(extra);
         }
         break;
       }
@@ -699,44 +770,58 @@ export class Match {
     // and holding your ground fires it dead straight. Position, not velocity —
     // no split-second flick timing required of a seven-year-old thumb.
     const angle = clamp((p.x - b.catchX) * 2.4, -1.1, 1.1);
-    b.speed = Math.min(MAX_SPEED, Math.max(BASE_SPEED, b.speed) * 1.3);
+    b.speed = Math.min(MAX_SPEED, Math.max(BASE_SPEED, b.speed) * MAGNET_FLING);
     if (b.beach > 0) b.speed = Math.min(b.speed, BASE_SPEED * 1.15);
     b.vx = Math.sin(angle) * b.speed;
     b.vy = Math.cos(angle) * b.speed * dir;
+    b.flung = true;
     this.shake = Math.max(this.shake, 0.8);
     this.event({ t: 'fling', x: b.x, y: b.y, p: i });
   }
 
+  /**
+   * Spend a full meter on the hero's special. A press that would change
+   * nothing — arming what is already armed, a second wall while one stands —
+   * is refused and keeps the meter.
+   */
   fireSpecial(i) {
     if (this.phase !== 'play' || this.meter[i] < 1) return;
     const spec = this.chars[i].special;
-    this.meter[i] = 0;
     const p = this.paddles[i];
 
     switch (spec.id) {
       case 'afterburn':
       case 'curve':
       case 'phantom':
+        if (p.pending) return;
         p.pending = { id: spec.id, until: this.time + spec.duration };
         break;
       case 'aegis':
-        p.shield = spec.duration;
+        if (!this.raiseAegis(i, spec)) return;
         break;
       case 'magnet':
+        if (p.magnet > 0) return;
         p.magnet = spec.duration;
         break;
       case 'quake': {
         const away = i === 0 ? -1 : 1;
         for (const b of this.balls) {
+          // An attack, not a panic button: a ball on BRIO's own half that is
+          // bearing down on BRIO's goal is BRIO's to return, quake or not.
+          const mine = i === 0 ? b.y > 0.5 : b.y < 0.5;
+          const atMe = i === 0 ? b.vy > 0 : b.vy < 0;
+          if (b.held < 0 && mine && atMe) continue;
           // A quake rips a caught ball straight off the rival's magnet.
           if (b.held >= 0) { b.held = -1; b.vx = 0; b.vy = away; }
-          b.speed = Math.min(MAX_SPEED, b.speed * 1.15);
           b.vy = Math.abs(b.vy) * away;
           b.spin = 0;
           b.arc = false;
           this.renormalise(b);
+          this.keepHeading(b);
           b.owner = i;
         }
+        // ... and shatters GU's midline wall, which would only bat it back.
+        for (const q of this.props.filter((o) => o.kind === 'wall' && o.p !== i)) this.dropProp(q);
         this.paddles[1 - i].frost = spec.duration;
         this.shake = 1.4;
         this.hitstop = 0.1;
@@ -745,7 +830,32 @@ export class Match {
       default:
         break;
     }
+    this.meter[i] = 0;
     this.event({ t: 'special', p: i, id: spec.id });
+  }
+
+  /**
+   * AEGIS. The first press of a point raises the barrier behind the paddle;
+   * every later one raises a wall on the midline, one at a time, whether or
+   * not the barrier still stands — a reward for a long rally, since each
+   * press takes a full meter. Both cover 0.4 of the court, centred where GU
+   * stood, save one ball and last six seconds. Returns false for a press
+   * that would change nothing.
+   */
+  raiseAegis(i, spec) {
+    const p = this.paddles[i];
+    const x = clamp(p.x, AEGIS_HALF, 1 - AEGIS_HALF);
+    if (p.aegis > 0 && this.midline) {
+      if (this.props.some((q) => q.kind === 'wall' && q.p === i)) return false;
+      this.props.push({ kind: 'wall', x, y: WALL_Y, size: AEGIS_HALF, t: spec.duration, age: 0, p: i, hits: 0 });
+      this.event({ t: 'prop', k: 'wall', x, y: WALL_Y, p: i });
+    } else {
+      if (p.shield > 0) return false;
+      p.shield = spec.duration;
+      p.shieldX = x;
+    }
+    p.aegis++;
+    return true;
   }
 
   stepProps(dt) {
@@ -811,7 +921,7 @@ export class Match {
     this.crates = [];
     this.props = [];
     this.shake = 1.2;
-    for (const p of this.paddles) { p.shield = 0; p.pending = null; p.magnet = 0; }
+    for (const p of this.paddles) { p.shield = 0; p.aegis = 0; p.pending = null; p.magnet = 0; }
     this.event({
       t: 'goal', x: 0.5, y: loser === 0 ? 1 : 0, p: scorer, rally: this.rally,
       streak: this.streak[scorer],
@@ -839,17 +949,25 @@ export class Match {
       rl: this.rally,
       wn: this.winner,
       st: this.streak,
+      // The barrier rides as seconds left — never under 0.1 while it stands,
+      // so an older guest reading a flag still sees it — with its position
+      // appended.
       pd: this.paddles.map((p, i) => [
         +p.x.toFixed(4), +this.paddleWidth(i).toFixed(4),
-        p.shield > 0 ? 1 : 0, p.frost > 0 ? 1 : 0, p.pending ? 1 : 0,
+        p.shield > 0 ? Math.max(0.1, +p.shield.toFixed(1)) : 0, p.frost > 0 ? 1 : 0, p.pending ? 1 : 0,
         p.shrink > 0 ? 1 : 0, p.magnet > 0 ? 1 : 0,
-        +p.arco.toFixed(1),
+        +p.arco.toFixed(1), +p.shieldX.toFixed(3),
       ]),
-      bl: this.balls.map((b) => [
-        +b.x.toFixed(4), +b.y.toFixed(4), +b.vx.toFixed(3), +b.vy.toFixed(3),
-        b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
-        b.held >= 0 ? 1 : 0, b.owner, +b.mirror.toFixed(1),
-      ]),
+      // The velocity a ball actually travels at, lean included, so the guest
+      // extrapolates it without knowing the rule.
+      bl: this.balls.map((b) => {
+        const lean = this.lean(b);
+        return [
+          +b.x.toFixed(4), +b.y.toFixed(4), +(b.vx * lean).toFixed(3), +(b.vy * lean).toFixed(3),
+          b.fire > 0 ? 1 : 0, b.id, b.ghost > 0 ? 1 : 0, b.beach > 0 ? 1 : 0,
+          b.held >= 0 ? 1 : 0, b.owner, +b.mirror.toFixed(1),
+        ];
+      }),
       cr: this.crates.map((c) => [+c.x.toFixed(3), +c.y.toFixed(3), +c.spin.toFixed(2), c.item.id]),
       ev: this.outbox,
       sh: +this.shake.toFixed(2),
@@ -883,7 +1001,10 @@ export class Match {
       const pad = this.paddles[i];
       pad.x = p[0];
       pad.netWidth = p[1];
-      pad.shield = p[2] ? 1 : 0;
+      // An older host sends the barrier as a bare flag with no position: its
+      // AEGIS spans the whole goal and never runs out.
+      pad.shield = p[8] == null ? (p[2] ? Infinity : 0) : p[2] || 0;
+      pad.shieldX = p[8] ?? null;
       pad.frost = p[3] ? 1 : 0;
       pad.pending = p[4] ? { id: this.chars[i].special.id, until: Infinity } : null;
       pad.shrink = p[5] ? 1 : 0;
@@ -963,7 +1084,10 @@ export class Match {
       q.age += dt;
       q.t = Math.max(0, q.t - dt);
     }
-    for (const p of this.paddles) p.arco = Math.max(0, (p.arco || 0) - dt);
+    for (const p of this.paddles) {
+      p.arco = Math.max(0, (p.arco || 0) - dt);
+      p.shield = Math.max(0, (p.shield || 0) - dt);
+    }
     for (const c of this.crates) c.spin += dt * 1.4;
     this.shake = Math.max(0, this.shake - dt * 2.6);
   }
