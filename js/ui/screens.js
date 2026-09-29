@@ -17,7 +17,7 @@ import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
 import * as cloud from '../data/cloud.js';
-import { isIOS } from '../diag.js';
+import { isIOS, inAppBrowser } from '../diag.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
 // would make old phones pop the wrong one. Eight emoji in two grid rows, then
@@ -66,6 +66,19 @@ export function madeAgo(ms) {
 export const STALE_INVITE = 10 * 60000;
 
 /**
+ * Opened inside a chat app's own browser: leaving it for the chat, to send a
+ * code, closes the page and the handshake with it. The app's menu hands the
+ * page — invite and all — to the phone's own browser.
+ */
+function inAppNote() {
+  if (!inAppBrowser()) return '';
+  const browser = isIOS() ? 'Safari' : 'your browser';
+  return `<small class="warn" style="display:block;margin-top:8px"><b>This opened inside another
+    app.</b> Leaving it to send a code closes the game, so open this page in ${browser} first:
+    the app&rsquo;s &middot;&middot;&middot; or share menu &rarr; Open in ${browser}.</small>`;
+}
+
+/**
  * A crate's glyph, drawn in the pixel font exactly as it appears on court.
  * Markup leaves a <span data-glyph="id"> where one goes; fillGlyphs swaps
  * the canvases in once the HTML is parsed.
@@ -95,6 +108,13 @@ export class Screens {
     this.logoCanvas = null;
     this.toastHost = document.getElementById('toast');
     root.addEventListener('click', (e) => this.onClick(e));
+    // iOS scrolls the whole page to lift a focused box above the keyboard,
+    // and doesn't always scroll it back when the keyboard goes: the menus
+    // stay shifted, with taps landing off target.
+    document.addEventListener('focusout', () => setTimeout(() => {
+      const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName);
+      if (!typing && (window.scrollX || window.scrollY)) window.scrollTo(0, 0);
+    }, 100));
   }
 
   get profile() { return this.app.profile; }
@@ -111,6 +131,9 @@ export class Screens {
     this.root.scrollTop = 0;
     const build = this['screen' + name[0].toUpperCase() + name.slice(1)];
     if (!build) throw new Error('unknown screen: ' + name);
+    // A box pulled out from under the keyboard — a pasted code submitting
+    // itself — lets the keyboard go properly only if it lets go first.
+    document.activeElement?.blur?.();
     this.root.innerHTML = '';
     this.root.appendChild(build.call(this, data));
   }
@@ -221,7 +244,11 @@ export class Screens {
     this.toast('Got their reply? Paste it here');
   }
 
-  /** The name box, saved as it is left: uppercase, ten characters at most. */
+  /**
+   * The name box, saved as it is typed: uppercase, ten characters at most.
+   * Saved with every key, since a handshake box can be taken away — the link
+   * opening — before it is ever left.
+   */
   nameInput() {
     const input = document.createElement('input');
     input.type = 'text';
@@ -235,6 +262,7 @@ export class Screens {
       this.profile.name = input.value.trim().toUpperCase().slice(0, 10);
       this.app.saveProfile();
     };
+    input.addEventListener('input', commit);
     input.addEventListener('change', commit);
     input.addEventListener('blur', commit);
     return input;
@@ -299,7 +327,9 @@ export class Screens {
       </div>
       <small class="muted" style="display:block;margin-top:6px">
         Tap to switch. Fast drops the glows, scanlines and animated scenery.
-        Older phones get a much smoother game.</small>`;
+        Older phones get a much smoother game.</small>
+      ${isIOS() ? `<small class="muted" style="display:block;margin-top:6px">
+        No sound? On iPhone the game follows the silent switch.</small>` : ''}`;
     who.insertBefore(this.nameInput(), who.querySelector('.row'));
     wrap.appendChild(who);
 
@@ -659,7 +689,7 @@ export class Screens {
       music quieter for it.</small></p>
       <p style="margin-top:6px"><small>There&rsquo;s no relay server in between, so some
       networks &mdash; mobile data especially &mdash; can&rsquo;t connect two phones directly.
-      If yours won&rsquo;t, try a WiFi or a phone hotspot.</small></p>` : `
+      If yours won&rsquo;t, try a WiFi or a phone hotspot.</small></p>${inAppNote()}` : `
       <p>Both phones need to be on the <b>same WiFi</b>. One hosts, the other joins.</p>
       <p style="margin-top:8px"><small>If one of you is on an <b>iPhone</b>, let the
       Android phone host — the iPhone can then join straight from its Camera app.</small></p>
@@ -878,9 +908,10 @@ export class Screens {
           : 'Got the reply. Shaking hands over the WiFi&hellip;',
         status: { text: 'Connecting', kind: 'warn', pulse: true },
         later: `<p><small>${online
-          ? 'This is taking a while. Some networks &mdash; mobile data especially &mdash; can&rsquo;t '
-            + 'connect two phones directly. If it doesn&rsquo;t work, try with one of you on a WiFi '
-            + 'or a phone hotspot.'
+          ? 'This is taking a while. Your friend&rsquo;s game has to be open on their screen to '
+            + 'answer &mdash; an iPhone left in the chat app can&rsquo;t. Beyond that, some networks '
+            + '&mdash; mobile data especially &mdash; can&rsquo;t connect two phones directly. If it '
+            + 'doesn&rsquo;t work, try with one of you on a WiFi or a phone hotspot.'
           : 'This is taking a while. Both phones need to be on the same WiFi, and some guest '
             + 'networks block phones from each other &mdash; a personal hotspot gets around that.'}</small></p>
           <button class="btn small secondary" style="margin-top:8px" data-action="retry">Try again</button>`,
@@ -1000,21 +1031,40 @@ export class Screens {
         ? `<small class="warn" style="display:block;margin-top:8px">This invite was made
           ${madeAgo(age)}. If you don&rsquo;t connect, ask for a fresh one.</small>`
         : '';
+      // A player who came by an invite link skipped the connect screen and
+      // its name box — and on an iPhone the link opened in Safari, which
+      // keeps no name the home-screen app was given. The wait for the host
+      // is the last moment a name can still make it into the hello.
+      let who = null;
+      if (lb.isStandInName(this.profile.name)) {
+        who = document.createElement('div');
+        who.className = 'panel tight notice';
+        who.innerHTML = `
+          <h3 class="warn">Who&rsquo;s playing?</h3>
+          <p style="margin:4px 0 8px">Type your name while you wait, so the leaderboard can tell you apart.</p>`;
+        who.appendChild(this.nameInput());
+      }
       return this.signalScreen({
         ...common,
         title: 'YOUR REPLY',
         step: 1,
+        // An iPhone stops a page the moment it leaves the screen, so a reply
+        // sent from the chat app is only answered once its sender is back.
         instruction: (online
           ? 'Now send this reply back to your friend straight away &mdash; tap <b>Share reply</b> and '
-            + 'pick your chat. Their game connects the moment they paste it.'
+            + 'pick your chat &mdash; then <b>come back here</b> and keep this screen open. The games '
+            + 'connect the moment they paste it, but only while yours is on screen to answer.'
+            + inAppNote()
           : 'Now show <b>this</b> code to the host — their camera is already '
             + 'looking for it. If they can&rsquo;t scan, send it to them instead.') + stale,
         code: data.code,
+        extra: who,
         status: {
           text: online ? 'Waiting for them to paste it' : 'Waiting for the host', kind: 'warn', pulse: true,
         },
         later: `<p><small>${online
-          ? 'Still nothing? Check your friend got the reply &mdash; it works best pasted straight '
+          ? 'Still nothing? Keep this screen open &mdash; the link only comes up while your game is '
+            + 'on screen. Check your friend got the reply &mdash; it works best pasted straight '
             + 'away. If their game says it couldn&rsquo;t connect, ask them for a fresh invite and '
             + 'start again.'
           : 'Taking a while? Make sure the host scanned this reply &mdash; their camera watches '
@@ -1026,9 +1076,14 @@ export class Screens {
     if (data.stage === 'paste') {
       // An invite the Camera app reads opens in the browser, which keeps its
       // own name, history and offline copy apart from a home-screen install.
+      // The link can be copied instead, and this box takes it whole.
+      const toApp = !navigator.standalone ? '' : online
+        ? ' To play here instead, long-press the invite in your chat, copy it and paste it here.'
+        : ' To play here instead, copy the invite link &mdash; long-press the Camera&rsquo;s banner, '
+          + 'or have it sent to you as a message &mdash; and paste it here.';
       const iosNote = isIOS()
         ? `<small style="display:block;margin-top:8px">On iPhone, invites ${online ? 'you tap' : 'scanned with the Camera app'}
-          open in Safari (or your default browser), not in the home-screen app.</small>`
+          open in Safari (or your default browser), not in the home-screen app.${toApp}</small>`
         : '';
       const wrap = this.signalScreen({
         ...common,
@@ -1037,7 +1092,8 @@ export class Screens {
         instruction: (online
           ? 'Paste the invite your friend sent &mdash; the whole message is fine. (Tapping the '
             + 'invite in your chat does this for you.)'
-          : 'Paste the code your friend sent you — it connects as soon as it lands.') + iosNote,
+          : 'Paste the code your friend sent you — it connects as soon as it lands.') + iosNote
+          + (online ? inAppNote() : ''),
         actions: `
           <button class="btn" data-action="use-pasted">Connect</button>
           ${this.cancelButton(rejoin)}`,

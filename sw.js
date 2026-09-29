@@ -58,10 +58,12 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   // Network first so a redeploy is picked up, cache as the fallback that makes
-  // an internet-less WiFi work.
+  // an internet-less WiFi work. An error page — a deploy midway, a hiccup at
+  // the host — never replaces a good copy, and the good copy is served instead.
   event.respondWith(
     fetch(request)
       .then((res) => {
+        if (!res.ok) return caches.match(request).then((hit) => hit || res);
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
         return res;

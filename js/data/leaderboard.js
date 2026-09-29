@@ -10,6 +10,8 @@
 // it on, is one more way in for the same records; the phone's own copy stays
 // the one the tables are read from.
 
+import { log } from '../diag.js';
+
 const KEY = 'rogupong.matches.v1';
 const PROFILE_KEY = 'rogupong.profile.v1';
 // About 600 KB of storage at the cap: years of evenings for a group of
@@ -42,13 +44,18 @@ function read() {
   return cache;
 }
 
+let writeFailed = false;
+
 function write(list) {
   cache = list.length > MAX_RECORDS ? list.slice(-MAX_RECORDS) : list;
   revision++;
   try {
     localStorage.setItem(KEY, JSON.stringify(cache));
-  } catch {
-    /* private mode, or a full quota — the game still plays */
+  } catch (err) {
+    // Private mode, or a full quota — the game still plays, but what it
+    // holds now goes with the page. Worth a line in the log, once.
+    if (!writeFailed) log(`saving the history failed: ${err.name}`);
+    writeFailed = true;
   }
 }
 

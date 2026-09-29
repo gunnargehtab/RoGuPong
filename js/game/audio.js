@@ -56,6 +56,13 @@ export class Audio {
     }
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return;
+    // Game sound on iPhone mixes in with whatever else plays — the call an
+    // online match runs alongside, the player's own music — and goes quiet
+    // with the silent switch, as a game's should. Said outright rather than
+    // left to Safari's guess (Safari 17 and later).
+    if (navigator.audioSession) {
+      try { navigator.audioSession.type = 'ambient'; } catch { /* unknown type: keep the default */ }
+    }
     this.ctx = new Ctor();
     // iOS parks the context — 'interrupted' for a call, Siri or an app
     // switch, 'suspended' at other times — and doesn't always bring it back.

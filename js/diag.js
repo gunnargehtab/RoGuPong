@@ -52,13 +52,27 @@ export function isIOS() {
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
-/** Home-screen app, installed app, or a plain browser tab. */
+/**
+ * Opened inside another app — a chat app's built-in browser, not the phone's
+ * own. It keeps a storage of its own, and closing it to get back to the chat
+ * ends the page, handshake and all. On iOS every real browser carries the
+ * Safari token and only the home-screen app and app-embedded views drop it;
+ * on Android an embedded view says `wv`.
+ */
+export function inAppBrowser() {
+  const ua = navigator.userAgent;
+  if (/FBAN|FBAV|Instagram|Snapchat|musical_ly|Line\//.test(ua)) return true;
+  if (isIOS()) return !navigator.standalone && !/Safari\//.test(ua);
+  return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+/** Home-screen app, installed app, a chat app's built-in browser, or a plain browser tab. */
 export function displayMode() {
   if (navigator.standalone) return 'home-screen app';
   try {
     if (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches) return 'installed app';
   } catch { /* no media queries for it */ }
-  return 'browser tab';
+  return inAppBrowser() ? 'in-app browser' : 'browser tab';
 }
 
 function browserName(ua) {
@@ -88,7 +102,11 @@ export function device() {
   if (isIOS()) {
     parts.push(/iPhone|iPod/.test(ua) ? 'iPhone' : 'iPad');
     const v = ua.match(/OS (\d+)_(\d+)(?:_(\d+))? like Mac/);
-    if (v) parts.push(`iOS ${v.slice(1).filter(Boolean).join('.')}`);
+    // From iOS 26 the system version in the user agent stays at 18.6, but
+    // Safari's own version, numbered with the system's since, keeps counting.
+    const safari = ua.match(/Version\/(\d+(?:\.\d+)?)/);
+    if (safari && parseFloat(safari[1]) >= 26) parts.push(`iOS ${safari[1]}`);
+    else if (v) parts.push(`iOS ${v.slice(1).filter(Boolean).join('.')}`);
   } else {
     const v = ua.match(/Android (\d+(?:\.\d+)?)/);
     parts.push(v ? `Android ${v[1]}` : /Android/.test(ua) ? 'Android' : 'desktop');

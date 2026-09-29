@@ -20,7 +20,7 @@ import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
-import { log, logLines, clock, device, isIOS } from './diag.js';
+import { log, logLines, clock, device, isIOS, inAppBrowser } from './diag.js';
 
 const SNAPSHOT_HZ = 30;
 const INPUT_HZ = 30;
@@ -106,6 +106,11 @@ const ONLINE_HINT = 'Some networks — mobile data especially — can\'t connect
   + 'and there is no relay server in between to fall back on. Try again with one of you on a '
   + 'WiFi or a phone hotspot, and swap the codes promptly: the longer a reply waits to be '
   + 'pasted, the less likely it gets through.';
+// An online handshake that never came up. Most often it's a phone left in the
+// chat app — an iPhone stops a page the moment it leaves the screen.
+const ONLINE_CONNECT_HINT = 'Both games have to be open on screen while they connect: a phone '
+  + 'left in the chat app — an iPhone especially — can\'t answer. If both were, the networks may '
+  + 'be why. ' + ONLINE_HINT;
 const AWAY_HINT = 'Switching apps or letting the screen lock pauses the game, and the other '
   + 'phone gives up if it stays away too long — 30 seconds, when both games are up to date. '
   + 'Keep RoGuPong on screen on both phones while you play.';
@@ -129,6 +134,38 @@ function awayText(hiddenAt, last, now, theirs) {
   }
   // An older build never says when it leaves the screen, so silence proves nothing.
   return theirs ? 'No word of leaving the screen' : 'On screen';
+}
+
+/** Take a joined invite out of the address, so a reload doesn't try it again. */
+function clearInviteLink() {
+  if (/[#?&]j=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+}
+
+/**
+ * iOS takes a home-screen icon only from an apple-touch-icon bitmap — the SVG
+ * the manifest names is ignored, and the icon becomes a screenshot of the
+ * page. The game ships no images, so it draws one from that SVG for Safari's
+ * Add to Home Screen to find.
+ */
+function addTouchIcon() {
+  if (!isIOS() || navigator.standalone) return;
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 180;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, 180, 180);
+    const link = document.createElement('link');
+    link.rel = 'apple-touch-icon';
+    try {
+      link.href = c.toDataURL('image/png');
+    } catch {
+      return;                     // an old WebKit that won't read back an SVG
+    }
+    document.head.appendChild(link);
+  };
+  img.src = 'icon.svg';
 }
 
 class App {
@@ -229,6 +266,7 @@ class App {
 
     this.watchForDiagnostics();
     this.keepStorage();
+    addTouchIcon();
     // A match landing on this phone, by play, connect or import, queues it
     // for the cloud league; the network coming back sends what waited.
     cloud.onPending(() => this.requestSync());
@@ -266,6 +304,7 @@ class App {
   async keepStorage() {
     const s = navigator.storage;
     if (!s?.persisted) { this.storageNote = 'no storage manager'; return; }
+    const was = this.storageNote;
     try {
       let kept = await s.persisted();
       if (!kept && isIOS() && s.persist) kept = await s.persist();
@@ -273,6 +312,7 @@ class App {
     } catch {
       this.storageNote = 'unknown';
     }
+    if (this.storageNote !== was) log(`storage: ${this.storageNote}`);
   }
 
   /**
@@ -299,6 +339,10 @@ class App {
     if (since != null) {
       this.lastAway = { for: now - since, back: now };
       log(`page visible after ${secs(now - since)}`);
+      // Time away doesn't count against connecting: the page couldn't take
+      // its part meanwhile (iOS stops it outright), so the clock waited too.
+      const hs = this.hs;
+      if (hs?.stage === 'connecting') hs.at += now - Math.max(since, hs.at);
     }
     this.hiddenAt = null;
     // The first frames back span the whole absence; they say nothing about
@@ -313,6 +357,9 @@ class App {
     if (this.wantAwake) this.keepAwake(true);
     this.peer?.backOnScreen();
     this.offerPaste();
+    // Back from sending the reply: the link only comes up while this page is
+    // on screen to answer, so it had better stay.
+    if (this.online && this.hs?.stage === 'reply') this.screens.toast('Keep this screen open until you connect', 'warn');
     this.syncIfStale(SYNC_STALE, 3000);
     if (this.missedEmote) {
       const { i, theirs } = this.missedEmote;
@@ -342,8 +389,10 @@ class App {
     if (!/[#?&]j=/.test(hash)) return;
     const code = extractCode(hash);
     // Clear it before connecting, so a reload does not try to rejoin a match
-    // that is long over.
-    history.replaceState(null, '', location.pathname + location.search);
+    // that is long over. Not inside a chat app's own browser, though: its
+    // "Open in Safari" passes on the address as it stands, and the invite has
+    // to go with it. The link opening clears it there.
+    if (!inAppBrowser()) clearInviteLink();
 
     if (!CODE_RE.test(code)) {
       this.screens.toast('That invite link looks damaged', 'bad');
@@ -741,6 +790,9 @@ class App {
         }
       }
       this.pendingResult = null;
+      // Asking again costs nothing, and a browser that turned down a page just
+      // opened may think again about one that is being played.
+      if (this.storageNote === 'best effort') this.keepStorage();
       this.keepAwake(!!this.peer);        // still connected: the rematch is a tap away
       audio.playMusic('menu');
       this.go('results', {
@@ -769,6 +821,9 @@ class App {
       }
       return;
     }
+    // A lock the browser let go of is spent, whether or not word of it
+    // arrived before the page came back.
+    if (this.wakeLock?.released) this.wakeLock = null;
     // Only a visible page may hold one.
     if (this.wakeLock || this.wakeLockPending || document.hidden) return;
     this.wakeLockPending = true;
@@ -876,8 +931,10 @@ class App {
     peer.on('stall', () => {
       log('link: stalled, waiting for it to come back');
       // A friend who left the screen takes their end of the link with them
-      // (iOS parks the whole page): expected, not a hiccup.
-      this.stallShown = this.theirHiddenAt == null;
+      // (iOS parks the whole page): expected, not a hiccup. So does this
+      // phone, when it is the one just back.
+      const back = this.lastAway && performance.now() - this.lastAway.back < 5000;
+      this.stallShown = this.theirHiddenAt == null && this.hiddenAt == null && !back;
       if (this.stallShown) this.screens.toast('Connection hiccup — hold on…', 'warn');
     });
     peer.on('recover', (ms) => {
@@ -887,6 +944,7 @@ class App {
     });
     peer.on('open', () => {
       this.stopScanner();
+      clearInviteLink();
       audio.blip(880, 0.1);
       this.screens.toast(this.rejoin ? 'Reconnected' : 'Connected', 'good');
       this.hs = null;
@@ -1186,23 +1244,25 @@ class App {
     const p = this.peer;
     const opened = !!p?.openedAt;
     const step = !opened ? 'handshake' : this.mode === 'match' ? 'match' : this.screens.current;
-    const who = this.theirName || 'your friend';
-    const Who = this.theirName || 'Your friend';
     const quiet = opened ? now - p.lastSeen : 0;
     const limit = AWAY_LIMIT / 1000;
     const calledOff = reason === 'away' || reason === 'away-self';
 
-    let text;
-    if (!opened) {
-      // The friend's name only arrives once connected, so no names here.
-      const host = p ? p.isHost : this.role === 'host';
-      text = this.online
-        ? (host ? 'Couldn\'t connect over the internet.'
-          : 'Couldn\'t connect over the internet — or the host never got your reply.')
-        : (host ? 'The two phones couldn\'t reach each other.'
-          : 'The connection never came up. Did the host scan your reply?');
-    } else {
-      text = {
+    // What happened, naming the friend — or, for the diagnostics report that
+    // gets pasted into public issues, not.
+    const say = (name) => {
+      if (!opened) {
+        // The friend's name only arrives once connected, so no names here.
+        const host = p ? p.isHost : this.role === 'host';
+        return this.online
+          ? (host ? 'Couldn\'t connect over the internet.'
+            : 'Couldn\'t connect over the internet — or the host never got your reply.')
+          : (host ? 'The two phones couldn\'t reach each other.'
+            : 'The connection never came up. Did the host scan your reply?');
+      }
+      const who = name || 'your friend';
+      const Who = name || 'Your friend';
+      return {
         bye: `${Who} left.`,
         away: `${Who} left the game for over ${limit} seconds, so the match was called off.`,
         'away-self': `You left the game for over ${limit} seconds, so the match was called off.`,
@@ -1211,7 +1271,8 @@ class App {
         failed: `The link to ${who}'s phone failed.`,
         closed: `${Who}'s phone closed the connection.`,
       }[reason] || 'The connection dropped.';
-    }
+    };
+    const text = say(this.theirName);
 
     const facts = [['When', STEP_LABEL[step] || 'In the menus']];
     if (opened) {
@@ -1228,12 +1289,12 @@ class App {
     const leftScreen = this.hiddenAt != null || this.theirHiddenAt != null
       || (this.lastAway && now - this.lastAway.back < 30000)
       || (this.theirLastAway && now - this.theirLastAway.back < 30000);
-    const netHint = this.online ? ONLINE_HINT : WIFI_HINT;
+    const netHint = !this.online ? WIFI_HINT : opened ? ONLINE_HINT : ONLINE_CONNECT_HINT;
     const hint = reason === 'bye' ? null : calledOff ? CALLED_OFF_HINT
       : opened && leftScreen ? AWAY_HINT : netHint;
 
     return {
-      reason, step, text, facts, hint, wall: Date.now(),
+      reason, step, text, plain: say(null), facts, hint, wall: Date.now(),
       title: calledOff ? 'CALLED OFF' : opened ? 'LINK LOST' : 'COULDN\'T CONNECT',
       next: opened ? 'rejoin' : 'retry',
       auto: opened && reason !== 'bye' && !calledOff,
@@ -1311,7 +1372,7 @@ class App {
       `page: ${document.hidden ? 'hidden' : 'visible'} · ${navigator.onLine ? 'online' : 'offline'} · `
         + `on ${this.mode === 'match' ? (this.match?.holding ? 'a paused match' : 'a match') : this.screens.current || '?'}`,
       `link: ${this.peer ? this.linkSummary(this.peer) : 'none'}`,
-      d ? `last drop: ${d.reason} at ${clock(d.wall)} — ${d.text}` : 'last drop: none this session',
+      d ? `last drop: ${d.reason} at ${clock(d.wall)} — ${d.plain || d.text}` : 'last drop: none this session',
       ...(d ? [`  ${d.facts.map(([k, v]) => `${k}: ${v}`).join(' · ')}`, `  link then: ${d.link}`] : []),
       '',
       'events:',
@@ -1553,19 +1614,30 @@ class App {
   async shareCode(kind) {
     const code = this.peer?.code;
     if (!code || !navigator.share) return;
+    // The invite travels as a link so the friend just taps it and the game
+    // joins itself; the reply stays a bare code, because tapping a link
+    // would navigate the host away from its own live connection. Online,
+    // each says in a line what it is for, since it arrives in a chat.
+    const link = kind === 'link' ? inviteLink(code) : null;
+    const reply = this.online ? this.replyMessage(code) : code;
     try {
-      // The invite travels as a link so the friend just taps it and the game
-      // joins itself; the reply stays a bare code, because tapping a link
-      // would navigate the host away from its own live connection. Online,
-      // each says in a line what it is for, since it arrives in a chat.
-      if (kind === 'link') {
+      if (link) {
         await navigator.share(this.online
-          ? { title: 'RoGuPong', text: 'Play RoGuPong with me! Tap to join:', url: inviteLink(code) }
-          : { title: 'RoGuPong', url: inviteLink(code) });
+          ? { title: 'RoGuPong', text: 'Play RoGuPong with me! Tap to join:', url: link }
+          : { title: 'RoGuPong', url: link });
       } else {
-        await navigator.share({ text: this.online ? this.replyMessage(code) : code });
+        await navigator.share({ text: reply });
       }
-    } catch { /* the user closed the share sheet */ }
+    } catch (err) {
+      // Closing the sheet is no failure. Anything else — a chat app's own
+      // browser that won't share — puts the text up to copy by hand; the
+      // clipboard is out of reach by now, the tap long spent.
+      if (err.name !== 'AbortError') {
+        log(`share failed: ${err.name}`);
+        this.screens.revealText(link || reply);
+        this.screens.toast('Couldn\'t share — long-press to copy it', 'bad');
+      }
+    }
   }
 
   /** An online reply as a chat message: a line for the friend, then the code the paste box finds in it. */
@@ -2023,15 +2095,10 @@ class App {
       this.screens.toast(!this.online ? 'Code copied — send it however you like'
         : invite ? 'Invite copied — paste it into your chat' : 'Reply copied — send it back to your friend', 'good');
     } catch {
-      const box = document.getElementById('rawcode');
-      if (box) {
-        const range = document.createRange();
-        range.selectNodeContents(box);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        this.screens.toast('Selected — long-press to copy');
-      }
+      // Online the code box sits folded away, and holds the bare code rather
+      // than the link or message that should go: show what to send instead.
+      this.screens.revealText(text);
+      this.screens.toast('Selected — long-press to copy');
     }
   }
 
