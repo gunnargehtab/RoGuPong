@@ -400,8 +400,9 @@ correction reads that pure lag as error. (An earlier version did exactly that,
 snapping past 0.14 court of divergence — which fired on every hard reversal
 and teleported the paddle backwards mid-swipe, a visible twitch, worst on
 phones and networks with the most latency.) Instead the guest keeps
-0.45 s of its own paddle's history — nearly twice the worst staleness stack,
-including a 30 Hz low-power-mode frame at each end — and compares the echo
+0.45 s of its own paddle's history — nearly twice the worst staleness stack on
+a WiFi, including a 30 Hz low-power-mode frame at each end, and longer over a
+slow link (below) — and compares the echo
 against the whole span covered in that window. An echo inside the span is merely the past
 and is left alone; only distance beyond the span is real desync (a lost input
 burst, a clamp mismatch), eased away at 2.5/s, or snapped when it exceeds 0.14
@@ -489,6 +490,46 @@ set the court moving again. Counting back in, the guest waits for the host's
 countdown rather than running its own, so the ball never sets off early on
 one phone.
 
+**Playing over a slow link.** All of the above was tuned for a WiFi's few
+milliseconds. Online (§6) a round trip of 50–150 ms is ordinary, and three
+things that don't matter on a WiFi start to show. The guest sees the ball
+half a round trip late, and its paddle reaches the host half a round trip
+after it moved. So a save made in time on the guest's screen reached the host
+a whole round trip after the ball went by, and was scored as a miss. Between
+snapshots the guest's ball slid along a side wall instead of bouncing off it,
+until the host's bounce arrived. And the prediction memory's 0.45 s only
+covers round trips up to about 300 ms. The fixes work in half round trips,
+taken from the heartbeat's smoothed figure and capped at 0.1 s:
+
+- **The guest draws the ball ahead.** Each snapshot's balls are carried half
+  a round trip forward along their heading (`Match.project`), so the guest
+  sees the ball where the host has it now. They bounce off the side walls on
+  the way, and between snapshots they bounce too, rather than slide. A wall
+  bounce the guest drew itself is trusted for 0.2 s, so a snapshot sent just
+  before the host's own bounce doesn't turn the ball straight back into the
+  wall. The guest never draws a ball through a paddle face on its own. Whether
+  the ball is returned there or goes by is the host's to say, and a ball drawn
+  through a paddle that then returns it would only pop back out. So at the face
+  the drawn ball waits for the host's word.
+- **The host gives the guest's saves grace.** A ball past the guest's paddle
+  face can still be saved for half a round trip after it crossed
+  (`Match.grace`), and the goal waits for that time to run out. Half the trip
+  is spent drawing the ball ahead and the other half here, which together
+  cover the whole round trip. On a WiFi the grace is a few milliseconds. It is
+  a netcode fix rather than a balance change: it takes away a handicap that
+  only the guest had, and it is not in the balance version.
+- **The prediction memory grows with the lag**: the larger of 0.45 s and the
+  round trip plus 0.2 s.
+
+A benchmark played two bots against each other over a link with an injected
+delay. The guest bot reacts late, so its saves are last-moment ones. The
+benchmark counted the balls the guest's paddle covered on the guest's own
+screen that the host then scored as goals. At a 150 ms round trip that was
+9% of them before the fixes and 1% after. At 200 ms it was 13% before and 1%
+after. The lobby also notes a **laggy connection** above a smoothed 120 ms,
+and drops the note below 100 ms. Nothing here changes what travels between the
+phones, so it needs no protocol bump.
+
 ---
 
 ## 6. Getting the two phones connected
@@ -529,7 +570,7 @@ Detection API. A shared invite travels as a link the friend just taps, and a
 pasted code connects the instant it lands in the box.
 
 STUN servers are configured but unused on a shared WiFi, where local candidates
-win immediately. ICE gathering is treated as settled 0.4 s after the last
+win immediately. Online they are what connects (below). ICE gathering is treated as settled 0.4 s after the last
 candidate arrives, with a three-second hard cap: a WiFi with no internet behind
 it never reaches "complete" — its STUN requests just vanish — so waiting for
 the cap on both phones used to add six seconds of dead air to every handshake.
@@ -571,6 +612,87 @@ iPhones. It was started and then deliberately dropped: roughly seven hundred
 lines of binarizer, perspective sampling and Reed-Solomon error correction, to
 give an iPhone a *worse* scanning experience than the camera it already has, for
 a pairing neither of the two players in this game has.
+
+### When it doesn't connect
+
+A handshake that has sent its reply and is connecting shows the seconds
+counting and what it is doing ("Connecting", then "Securing the link" once a
+route is found). After 12 s (25 s online) it says what to try and offers **Try
+again**. After 35 s (60 s online) it gives up. A guest waiting for the host to
+take its reply gets the same hint after 45 s (150 s online). A handshake that
+never connected ends on **Couldn't connect**, never on Link Lost. That screen
+says which side it was ("The connection never came up. Did the host scan your
+reply?") and offers Try again, which starts the same side over in the same
+mode.
+
+When a link that was up drops unasked, both phones go straight back into the
+handshake on the same sides, under a **Reconnecting** banner that says what
+happened (with the Link Lost facts folded under it). The host makes a fresh
+invite at once, and the guest is ready to scan or paste it. The stage, the
+rules and both picks are as they were, so picking up takes one scan on each
+phone rather than the trip through the menus. A match in progress is lost,
+though: it is never resumed. A friend who left on purpose (`bye`), or a match
+called off (§9), lands on Link Lost as before, with a **Reconnect** button.
+Reconnecting renegotiates from scratch rather than restarting ICE over the
+old connection, which would need the connection to be partly up. That is the
+rare case once the grace periods of §9 ride out the blips.
+
+### Online
+
+What limits the game to one WiFi is not signalling, which the codes already
+do without a server, but getting through the two home routers. The connect
+screen's **Online** tab plays over the internet with the same handshake, the
+codes travelling through a chat app instead of a camera:
+
+- **The internet address makes the code.** Each phone asks a STUN server
+  where the internet sees it, and that server-reflexive (`srflx`) address is
+  what the other phone connects to. So an online code puts it first, where a
+  phone with a pile of local addresses can't crowd it out of the six the
+  compact code carries. Gathering waits for it: the quiet-for-0.4 s rule only
+  starts counting once a STUN answer has arrived, with an 8 s cap for slow
+  mobile data. An online invite with no internet address in it is refused
+  then and there ("NO INTERNET"), rather than sent to a friend who would wait
+  on it for nothing.
+- **An online code says so, and when it was made.** After the candidates
+  comes a 5-byte trailer: a flags byte, then the time in seconds. A build from
+  before it stops reading at the candidates and never sees it. The full-SDP
+  fallback carries the same stamp as an attribute of its own, which browsers
+  skip as one they don't know. The phone that opens an online invite plays
+  online itself, whichever tab it was on. The stamp lets it warn when an
+  invite is over 10 minutes old, and the host's own invite screen counts its
+  invite's age and offers a fresh one past that. An invite can grow stale
+  because the host's router may stop keeping its way in open. Same-WiFi codes
+  carry no trailer, and are byte for byte what they were.
+- **The paste is guided.** The invite goes out as a link with a line of text
+  (Share or Copy), and tapping it opens the game and joins. The reply goes
+  back as a short message the paste box finds the code in. The host's invite
+  screen holds the paste box, so there is nothing to navigate. Coming back
+  from the chat app lights up the Paste button. Where the browser lets a page
+  read the clipboard unasked, once the player has allowed it, a reply found
+  there is taken at once. Anything else on the clipboard is ignored, including
+  this phone's own invite. Pasting that into the box gets a plain "that's your
+  own invite".
+- **The guest waits for the host's paste.** The guest's browser starts its
+  connectivity checks the moment it makes the reply. With no answer from the
+  host's router, which lets nothing in until the host checks back, it gives up
+  after about 15 s and the link reads `failed`. It isn't final: once the host
+  has the reply, its first check still gets through and the link comes up.
+  This was tested in Chrome with the reply pasted 60 s late. So an online
+  handshake doesn't drop on `failed` before it opens; the app's own clock
+  decides. Re-adding the host's candidates to restart the guest's checks was
+  tried and dropped: Chrome ignores a remote candidate it has already seen.
+  What sets the real window is how long the guest's router keeps the way back
+  open after the guest's checks stop, so both screens ask for the codes to be
+  swapped promptly.
+- **Honest failure.** About one pair in five — mobile networks behind carrier
+  NAT mostly — can't connect without a TURN relay. That would be a server to
+  run or pay for, so there is none. Those pairs get "Couldn't connect over the
+  internet" with the advice to try a WiFi or a phone hotspot.
+
+The players talk over their usual call app, running alongside. No browser
+says when a call is on, so the music simply plays at about a third of its
+level while an online link is up. On iOS a call may silence the page's sound
+altogether. Lag is made up for as §5 describes.
 
 ---
 
@@ -721,13 +843,20 @@ hold.
 | Compact SDP encoding not viable | Silently ships the full description, compressed |
 | ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
 | Camera denied while hosting | The preview is removed; share and paste still work |
-| WiFi has client isolation | Link Lost says the phones couldn't reach each other, with a note suggesting a hotspot |
+| WiFi has client isolation | Couldn't connect says the phones couldn't reach each other, with a note suggesting a hotspot, and offers Try again |
+| A handshake hangs | Seconds count on "Connecting", a hint and Try again come up after 12 s (25 s online), and it gives up with Couldn't connect after 35 s (60 s online) (§6) |
+| Online, the networks can't be connected directly | Couldn't connect over the internet, with the advice to try a WiFi or a phone hotspot. There is no relay (§6) |
+| An online invite finds no internet address | Refused as NO INTERNET before anyone waits on it |
+| An online reply is pasted late | The guest's link reads `failed` after ~15 s but stays open, and the host's first check brings it up (§6) |
+| An old online invite | Its stamp says how old it is; over 10 minutes both phones flag it |
+| A slow link (online) | The guest draws the ball ahead and gets grace for its saves (§5); the lobby notes a laggy connection above 120 ms |
 | The link blips (WiFi power save, a router hiccup) | WebRTC calls it `disconnected`; the game waits at least 10 s for it to recover, with a toast, before calling it lost |
 | The other phone goes silent | The heartbeat gives up after 8 s with nothing heard in a match, 30 s anywhere else, and shows the Link Lost screen |
 | This phone leaves the screen | No verdict on the link while it's hidden, nor for a couple of heartbeats after it comes back |
 | A phone leaves the screen mid-match | The match holds on both phones, and the waiting one shows a pause screen with emotes and quick-chat. It resumes with a 3 s countdown, or is called off after 30 s |
 | A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
-| Any drop | Link Lost says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
+| A link drops unasked | Both phones go straight back into the handshake on the same sides, lobby state kept (§6) |
+| Any drop | Link Lost (or the Reconnecting banner) says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
 | A match history too long for one message | Streamed after `hello` in paced chunks; a drop mid-stream keeps what arrived |
 | A league code too long for a chat message | It carries the newest matches that fit, and says so |
 | A snapshot arrives late | Discarded by tick number |
@@ -780,11 +909,13 @@ parks the away phone's end of the link along with its page. The pause needs
 protocol 4 on both phones. Against an older build nothing holds, and 8 s of
 silence in a match still ends it.
 
-**When it drops anyway.** Every drop lands on Link Lost with its real reason
-(the friend left, nothing heard for 8 or 30 s, the link went down and didn't
-come back, the connection failed, the other phone closed it, the match was
-called off), the step it happened at, how long since the last message, and
-whether either phone had left the screen. That last one is what tells a WiFi
+**When it drops anyway.** Every drop says its real reason (the friend left,
+nothing heard for 8 or 30 s, the link went down and didn't come back, the
+connection failed, the other phone closed it, the match was called off), the
+step it happened at, how long since the last message, and whether either
+phone had left the screen. It says so on Link Lost, or, for a drop nobody
+asked for, on the Reconnecting banner that takes both phones straight back
+into the handshake (§6). That last one is what tells a WiFi
 problem from a paused phone. It comes from the same `away` messages. Builds
 from before them never send them, so nothing but the pause and the diagnostics
 depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
@@ -849,4 +980,14 @@ compositor — a real slice of touch-to-paddle latency on Android.
   turning on the microphone changes how iOS routes the game's sound. Video
   was ruled out because a video tile covers the court on a portrait phone.
   Free text was ruled out because it would need moderating for the kids this
-  is played by.
+  is played by. Friends playing online talk over their usual call app,
+  running alongside the game, which keeps its music down for it (§6).
+- **No relay server, and no one-tap signalling.** A TURN relay would connect
+  the pairs of networks that can't reach each other directly, and a small
+  server could carry the codes so no one has to paste. Either is a server to
+  run or pay for. Online play (§6) accepts that some pairs can't connect and
+  says so, and guides the paste instead. Both get revisited if failed
+  connections or the paste turn out to be what stops people playing.
+- **No ICE restart.** Renegotiating over the old connection only helps when it
+  is still partly up. The grace periods of §9 already ride out most of those,
+  and a drop goes straight back into a fresh handshake (§6).

@@ -11,6 +11,11 @@
 //
 // If anything about that round-trip looks wrong we fall back to shipping the
 // whole SDP, deflate-compressed. Bigger code, same result.
+//
+// A code made for online play also says so, and when it was made: a trailer
+// after the candidates, which builds from before it never read that far to
+// see. The phone that opens an online invite plays online too, and can tell a
+// friend's invite from last week's.
 
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -58,6 +63,7 @@ class Writer {
   constructor() { this.b = []; }
   u8(v) { this.b.push(v & 0xff); }
   u16(v) { this.b.push((v >>> 8) & 0xff, v & 0xff); }
+  u32(v) { this.u16(v >>> 16); this.u16(v & 0xffff); }
   bytes(arr) { for (const v of arr) this.b.push(v & 0xff); }
   str(s) {
     const e = new TextEncoder().encode(s);
@@ -71,8 +77,10 @@ class Reader {
   constructor(bytes) { this.b = bytes; this.i = 0; }
   u8() { return this.b[this.i++]; }
   u16() { const v = (this.b[this.i] << 8) | this.b[this.i + 1]; this.i += 2; return v; }
+  u32() { return this.u16() * 65536 + this.u16(); }
   bytes(n) { const v = this.b.slice(this.i, this.i + n); this.i += n; return v; }
   str() { return new TextDecoder().decode(this.bytes(this.u8())); }
+  left() { return this.b.length - this.i; }
 }
 
 const hexToBytes = (hex) => {
@@ -87,6 +95,14 @@ const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).
 
 const CAND = { HOST_V4: 0, HOST_MDNS: 1, SRFLX_V4: 2, HOST_V6: 3, SRFLX_V6: 4 };
 const MDNS_RE = /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})\.local$/i;
+const MAX_CANDIDATES = 6;
+
+/**
+ * An address a phone on another network can reach: the one a STUN server saw.
+ * Local addresses are hidden behind mDNS names, which only resolve on the
+ * same network.
+ */
+export const isInternet = (c) => c.type === 'srflx';
 
 function ipv4ToBytes(ip) {
   const p = ip.split('.').map(Number);
@@ -197,8 +213,10 @@ export function dissect(sdp) {
 }
 
 const FMT_VERSION = 1;
+// The trailer's first byte: flags, of which there is one so far.
+const TRAIL_ONLINE = 0x01;
 
-function packCompact(sdp, role) {
+function packCompact(sdp, role, stamp) {
   const { ufrag, pwd, fingerprint, candidates } = dissect(sdp);
   const fpBytes = hexToBytes(fingerprint.replace(/:/g, ''));
   if (fpBytes.length !== 32) throw new Error('unexpected fingerprint length');
@@ -210,17 +228,24 @@ function packCompact(sdp, role) {
   w.bytes(fpBytes);
 
   // Local candidates first — on the same WiFi those are the ones that connect.
-  const ordered = [...candidates].sort((a, b) => (a.type === b.type ? 0 : a.type === 'host' ? -1 : 1));
+  // Online it is the internet address that connects, so it goes first, where
+  // a phone with a pile of local addresses can't crowd it out of the code.
+  const first = stamp ? 'srflx' : 'host';
+  const ordered = [...candidates].sort((a, b) => (a.type === b.type ? 0 : a.type === first ? -1 : 1));
   const packed = [];
   const probe = new Writer();
   for (const c of ordered) {
-    if (packed.length >= 6) break;
+    if (packed.length >= MAX_CANDIDATES) break;
     const before = probe.b.length;
     if (packCandidate(probe, c)) packed.push(c);
     else probe.b.length = before;
   }
   w.u8(packed.length);
   w.bytes(probe.b);
+  if (stamp) {
+    w.u8(TRAIL_ONLINE);
+    w.u32(Math.floor(stamp / 1000));
+  }
   return TAG_COMPACT + b32encode(w.done());
 }
 
@@ -246,6 +271,8 @@ function unpackCompact(code) {
   const n = r.u8();
   const cands = [];
   for (let i = 0; i < n; i++) cands.push(unpackCandidate(r, i));
+  let at = null;
+  if (r.left() >= 5 && (r.u8() & TRAIL_ONLINE)) at = r.u32() * 1000;
 
   const lines = [
     ...SDP_HEAD,
@@ -260,7 +287,7 @@ function unpackCompact(code) {
     ...cands,
     'a=end-of-candidates',
   ];
-  return { role, sdp: lines.join('\r\n') + '\r\n' };
+  return { role, sdp: lines.join('\r\n') + '\r\n', online: at != null, at };
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,7 +305,12 @@ export async function inflate(bytes) {
   return new Uint8Array(buf);
 }
 
-async function packFull(sdp, role) {
+// The full description carries the online stamp as an attribute of its own,
+// which browsers skip as one they don't know.
+const STAMP_RE = /^a=x-rogupong-online:(\d+)\r?\n/m;
+
+async function packFull(sdp, role, stamp) {
+  if (stamp) sdp = sdp.replace(/\r?\n?$/, '\r\n') + `a=x-rogupong-online:${Math.floor(stamp / 1000)}\r\n`;
   const raw = new TextEncoder().encode((role === 'answer' ? 'A' : 'O') + sdp);
   const body = typeof CompressionStream === 'function' ? await deflate(raw) : raw;
   const flag = new Uint8Array(1 + body.length);
@@ -293,7 +325,14 @@ async function unpackFull(code) {
   const body = bytes.slice(1);
   const raw = bytes[0] === 1 ? await inflate(body) : body;
   const text = new TextDecoder().decode(raw);
-  return { role: text[0] === 'A' ? 'answer' : 'offer', sdp: text.slice(1) };
+  const stamp = STAMP_RE.exec(text);
+  const at = stamp ? Number(stamp[1]) * 1000 : null;
+  return {
+    role: text[0] === 'A' ? 'answer' : 'offer',
+    sdp: text.slice(1).replace(STAMP_RE, ''),
+    online: at != null,
+    at,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,10 +341,22 @@ async function unpackFull(code) {
 /**
  * Turn a local description into a scannable/typable code. Tries the compact
  * encoding first and verifies it round-trips before trusting it.
+ *
+ * `online` stamps the code as one for online play, made now. An online invite
+ * with no internet address in it could only ever reach the same network, so
+ * it is refused outright (err.code 'no-internet') rather than sent to a
+ * friend who would wait on it for nothing.
  */
-export async function packSignal(sdp, role) {
+export async function packSignal(sdp, role, { online = false } = {}) {
+  const stamp = online ? Date.now() : 0;
+  const needNet = online && role === 'offer';
+  if (needNet && !dissect(sdp).candidates.some(isInternet)) {
+    const err = new Error('this phone found no internet address to invite from');
+    err.code = 'no-internet';
+    throw err;
+  }
   try {
-    const code = packCompact(sdp, role);
+    const code = packCompact(sdp, role, stamp);
     const back = unpackCompact(code);
     const mine = dissect(sdp);
     const theirs = dissect(back.sdp);
@@ -313,12 +364,14 @@ export async function packSignal(sdp, role) {
       && theirs.ufrag === mine.ufrag
       && theirs.pwd === mine.pwd
       && theirs.fingerprint.toUpperCase() === mine.fingerprint.toUpperCase()
-      && theirs.candidates.length > 0;
+      && theirs.candidates.length > 0
+      && back.online === online
+      && (!needNet || theirs.candidates.some(isInternet));
     if (ok) return code;
   } catch (err) {
     console.warn('[sdp] compact encoding unavailable, sending the full description:', err.message);
   }
-  return packFull(sdp, role);
+  return packFull(sdp, role, stamp);
 }
 
 /**
@@ -335,7 +388,10 @@ export function extractCode(input) {
   return embedded ? embedded[0] : squashed;
 }
 
-/** Turn a scanned/pasted code back into { role, sdp }. */
+/**
+ * Turn a scanned/pasted code back into { role, sdp, online, at }: `online` for
+ * a code made for online play, and `at` when it was made (null otherwise).
+ */
 export async function unpackSignal(code) {
   const clean = extractCode(code);
   if (clean.startsWith(TAG_COMPACT)) return unpackCompact(clean);

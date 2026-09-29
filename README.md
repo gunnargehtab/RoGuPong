@@ -18,7 +18,9 @@ a pong game for me and my friend (^.^)
 A 16-bit pong duel for two phones, played **directly between the handsets** —
 there is no game server anywhere. The two browsers connect to each other over
 the WiFi with WebRTC, and they arrange that connection by showing each other a
-QR code. One phone hosts, the other scans, and you are playing.
+QR code. One phone hosts, the other scans, and you are playing. Friends who
+aren't on the same WiFi can play **online** too, swapping the codes through a
+chat app instead.
 
 Everything in here is generated at runtime: no image files, no audio files, no
 web fonts, no third-party libraries. The pixel font, the logotype, the QR
@@ -33,9 +35,10 @@ WebRTC handshake was squeezed into a code you can scan off a phone screen.
 
 ## Playing it
 
-Both phones need to be on the **same WiFi**, and the page needs to be served
-over **HTTPS** (or `localhost`) — browsers only give a page the camera on a
-secure origin.
+Both phones need to be on the **same WiFi** — or both online, for
+[online play](#playing-online) — and the page needs to be served over
+**HTTPS** (or `localhost`): browsers only give a page the camera on a secure
+origin.
 
 ### It is already online
 
@@ -96,11 +99,45 @@ moment it lands in the box.
 > game for this; against an older one, 8 seconds of silence in a match still
 > ends it.
 
-> **If the link drops**, the Link Lost screen says why, and whether either
-> phone had left the screen. **Copy diagnostics** (there, and at the foot of
-> the title screen) copies the details of the phone and what just happened,
-> ready to paste into an issue. A brief WiFi hiccup doesn't end the session:
-> the game waits at least ten seconds for the link to come back.
+> **If the phones can't connect**, the game says so after a while — with
+> what to try and a **Try again** — rather than showing "Connecting…" forever.
+
+> **If the link drops**, both phones go straight back to connecting, on the
+> same sides, with the stage, the rules and both picks kept: one more
+> handshake and you're back in the lobby. The screen says what happened, and
+> whether either phone had left the screen. If your friend left on purpose,
+> Link Lost offers **Reconnect** instead. **Copy diagnostics** (on those
+> screens, and at the foot of the title screen) copies the details of the
+> phone and what just happened, ready to paste into an issue. A brief WiFi
+> hiccup doesn't end the session: the game waits at least ten seconds for the
+> link to come back.
+
+### Playing online
+
+Not on the same WiFi? Pick **Online** on the connect screen.
+
+1. The host taps **Send an invite** and shares it through any chat app.
+2. The friend taps the invite in the chat. Their game opens, joins, and makes
+   a reply: they tap **Share reply** and send it straight back.
+3. The host pastes the reply into the box under the invite, and you're in
+   the lobby. Coming back from the chat app, the Paste button is lit up. On
+   browsers that allow it, once you've let the game read the clipboard, it
+   picks the reply up by itself.
+
+**Keep your usual WhatsApp or FaceTime call going alongside** to talk while
+you play. Online, the game plays its music quieter for it. (On an iPhone, a
+call may silence the game's sound altogether.)
+
+There's no relay server in between, so some pairs of networks — mobile data
+especially — can't connect two phones directly. If yours won't, the game says
+so; try again with one of you on a WiFi or a phone hotspot. Swap the codes
+promptly: the longer a reply waits to be pasted, the less likely it gets
+through. An invite says how old it is, and an old one gets flagged.
+
+Over the internet a round trip is often a tenth of a second or more, and the
+game makes up for it: the guest sees the ball where it really is, and a save
+made in time on the guest's screen counts. The lobby says when a connection
+is laggy.
 
 ### Controls
 
