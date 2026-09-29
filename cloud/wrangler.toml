@@ -1,0 +1,15 @@
+# RoGuPong league sync — deploy with `npx wrangler deploy` from this folder.
+# See README.md next to this file.
+
+name = "rogupong-league"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "LEAGUE"
+class_name = "League"
+
+# SQLite-backed Durable Objects are the kind the Workers Free plan includes.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["League"]

@@ -6,6 +6,7 @@
 //   League code   the whole history as one line of text for any chat app.
 //                 Pasted into Import league on another phone it merges just
 //                 like a connect does: a union, nothing replaced or removed.
+//                 It carries the cloud league's key too, where there is one.
 //   History CSV   the matches as a table, for a bug report or a balance
 //                 discussion. Names become P1, P2… unless asked for.
 
@@ -25,7 +26,7 @@ const canDeflate = () => typeof CompressionStream === 'function';
  * match one array, its time the gap in seconds since the one before. Deflate
  * does the rest; the random ids are most of what is left.
  */
-function pack(records) {
+function pack(records, key) {
   const tables = { n: [], c: [], s: [] };
   const index = new Map();
   const ref = (t, v) => {
@@ -52,7 +53,8 @@ function pack(records) {
     last = at;
     return row;
   });
-  return { v: FORMAT, ...tables, m };
+  // A field older builds never look for, so the format stays the same.
+  return key ? { v: FORMAT, ...tables, m, k: key } : { v: FORMAT, ...tables, m };
 }
 
 /** Back to match records. Anything malformed is weeded out by mergeMatches. */
@@ -81,8 +83,8 @@ function unpack({ n, c, s, m }) {
   return out;
 }
 
-async function encode(records) {
-  const json = new TextEncoder().encode(JSON.stringify(pack(records)));
+async function encode(records, key) {
+  const json = new TextEncoder().encode(JSON.stringify(pack(records, key)));
   const body = canDeflate() ? await deflate(json) : json;
   const bytes = new Uint8Array(body.length + 1);
   bytes[0] = canDeflate() ? 1 : 0;
@@ -93,26 +95,28 @@ async function encode(records) {
 }
 
 /**
- * The history as a league code: { code, count, total }. A history too big
- * for one chat message carries only its newest `count` matches.
+ * The history as a league code: { code, count, total, key }. A history too
+ * big for one chat message carries only its newest `count` matches. `key`,
+ * the cloud league's, rides along for the phone that imports it.
  */
-export async function leagueCode(records = allMatches()) {
+export async function leagueCode(records = allMatches(), key = null) {
   let count = records.length;
-  let code = await encode(records);
+  let code = await encode(records, key);
   while (code.length > MAX_CODE && count > 0) {
     count = Math.floor(count * (MAX_CODE / code.length) * 0.97);
-    code = await encode(records.slice(records.length - count));
+    code = await encode(records.slice(records.length - count), key);
   }
-  return { code, count, total: records.length };
+  return { code, count, total: records.length, key };
 }
 
 /** The text that gets shared: what it is, what to do with it, then the code. */
-export function leagueMessage({ code, count, total }) {
+export function leagueMessage({ code, count, total, key }) {
   const what = count < total
     ? `the newest ${count} of ${total} matches`
     : `${count} match${count === 1 ? '' : 'es'}`;
+  const cloud = key ? ' Importing it also joins you to the league\'s cloud sync.' : '';
   return `RoGuPong league: ${what}. To add them to yours, open RoGuPong, `
-    + `go to Leaderboard → Import league and paste this whole message.\n\n${code}`;
+    + `go to Leaderboard → Import league and paste this whole message.${cloud}\n\n${code}`;
 }
 
 /** The league code inside whatever was pasted — the bare code or the whole message. */
@@ -121,7 +125,11 @@ export function findLeagueCode(text) {
   return found ? found.reduce((a, b) => (b.length > a.length ? b : a)) : null;
 }
 
-/** A league code back to match records, ready for mergeMatches. Throws on a bad code. */
+/**
+ * A league code back to { records, key }: match records ready for
+ * mergeMatches, and the cloud league's key if it carries one (unchecked).
+ * Throws on a bad code.
+ */
 export async function readLeague(code) {
   const bytes = b32decode(code.slice(TAG.length));
   if (bytes[0] === 1 && typeof DecompressionStream !== 'function') throw new Error('this browser can\'t unpack it');
@@ -136,7 +144,7 @@ export async function readLeague(code) {
   }
   if (data?.v > FORMAT) throw new Error('it comes from a newer RoGuPong — reload to update');
   if (data?.v !== FORMAT || !Array.isArray(data.m)) throw new Error('it looks damaged or cut short');
-  return unpack(data);
+  return { records: unpack(data), key: typeof data.k === 'string' ? data.k : null };
 }
 
 const csvField = (v) => {

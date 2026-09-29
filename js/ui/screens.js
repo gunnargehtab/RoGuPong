@@ -16,6 +16,7 @@ import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
+import * as cloud from '../data/cloud.js';
 import { isIOS } from '../diag.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
@@ -195,6 +196,12 @@ export class Screens {
   showLater() {
     const el = document.getElementById('hs-later');
     if (el) el.hidden = false;
+  }
+
+  /** The leaderboard's cloud sync lines, as a sync starts and ends. */
+  tickCloud() {
+    const el = document.getElementById('cloud-box');
+    if (el) el.innerHTML = this.cloudHtml();
   }
 
   /** The lobby's latency figure. */
@@ -404,10 +411,12 @@ export class Screens {
 
     const note = document.createElement('div');
     note.className = 'credit';
-    note.textContent = 'Histories merge automatically when you connect';
+    note.textContent = cloud.leagueKey() ? 'Histories merge when you connect, and through the cloud'
+      : 'Histories merge automatically when you connect';
     wrap.appendChild(note);
 
-    // For friends who can't meet up: the whole history through a chat app.
+    // For friends who can't meet up: the whole history through a chat app,
+    // or through the cloud league.
     const n = lb.allMatches().length;
     const leagueBox = document.createElement('div');
     leagueBox.className = 'panel tight';
@@ -421,7 +430,8 @@ export class Screens {
       <div class="row" style="margin-top:8px">
         <button class="btn small secondary" data-action="share-league">Share league</button>
         <button class="btn small secondary" data-action="import-league">Import league</button>
-      </div>`;
+      </div>
+      <div id="cloud-box">${this.cloudHtml()}</div>`;
     wrap.appendChild(leagueBox);
 
     const row = document.createElement('div');
@@ -439,6 +449,59 @@ export class Screens {
       <button class="textbtn" data-action="copy-history" data-names="yes">Copy with names</button>`;
     wrap.appendChild(out);
     return wrap;
+  }
+
+  /**
+   * Cloud sync, at the foot of the League panel, in a build that knows a
+   * Worker. Off, it says what it is and offers to start a league — or to join
+   * the one a friend's phone mentioned. On, it says which league, how fresh,
+   * and what is waiting to go up.
+   */
+  cloudHtml() {
+    if (!cloud.cloudReady()) return '';
+    const s = cloud.cloudStatus();
+    const offer = this.app.cloudOffer;
+    const join = offer ? `
+      <div class="row" style="margin-top:8px">
+        <button class="btn small secondary" data-action="cloud-join">Join ${esc(offer.label)}</button>
+      </div>` : '';
+    if (!s.key) {
+      return `
+        <div class="title-bar" style="margin-top:14px">
+          <h3>Cloud sync</h3>
+          <small class="muted">off</small>
+        </div>
+        <p style="margin-top:4px"><small>Keep the league online too: every phone in it catches up
+          whenever it has internet, without meeting, and a lost phone gets it all back. No accounts
+          &mdash; friends join by playing you or importing your league. Names and scores are kept on
+          RoGuPong&rsquo;s server.</small></p>
+        ${join}
+        <div class="row" style="margin-top:8px">
+          <button class="btn small secondary" data-action="cloud-start">
+            ${offer ? 'Start a new league' : 'Start a cloud league'}</button>
+        </div>`;
+    }
+    const when = s.syncing ? 'Syncing&hellip;'
+      : !navigator.onLine ? 'Offline &mdash; it syncs when you&rsquo;re back online'
+        : s.failure ? `Couldn&rsquo;t sync (${esc(s.failure)}) &mdash; it tries again by itself`
+          : s.at ? `Synced ${madeAgo(Date.now() - s.at)}` : 'Not synced yet';
+    const counts = [
+      s.last != null ? `${s.last} match${s.last === 1 ? '' : 'es'} in the league` : null,
+      s.waiting ? `${s.waiting} to send` : null,
+    ].filter(Boolean).join(' &middot; ');
+    return `
+      <div class="title-bar" style="margin-top:14px">
+        <h3>Cloud sync</h3>
+        <small class="muted">league #${esc(s.tag)}</small>
+      </div>
+      <p style="margin-top:4px"><small class="${s.failure && !s.syncing ? 'warn' : ''}">${when}</small>
+        ${counts ? `<br><small class="muted">${counts}</small>` : ''}</p>
+      <p style="margin-top:4px"><small>Friends join by playing you or importing your league.</small></p>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small secondary" data-action="cloud-sync"${s.syncing ? ' disabled' : ''}>Sync now</button>
+        <button class="btn small secondary" data-action="cloud-leave">Leave</button>
+      </div>
+      ${join}`;
   }
 
   /**

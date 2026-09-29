@@ -35,6 +35,7 @@ const ASSETS = [
   'js/game/scenes/alpi.js',
   'js/data/leaderboard.js',
   'js/data/league.js',
+  'js/data/cloud.js',
 ];
 
 self.addEventListener('install', (event) => {

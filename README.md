@@ -139,6 +139,23 @@ game makes up for it: the guest sees the ball where it really is, and a save
 made in time on the guest's screen counts. The lobby says when a connection
 is laggy.
 
+### Cloud sync for the leaderboard
+
+Optional, and off until someone turns it on. On the **Leaderboard**, tap
+**Start a cloud league**. From then on your phone keeps the league on
+RoGuPong's small server as well as on the phone, and catches up with it
+whenever it has internet. There are no accounts. A friend's phone joins your
+league the next time you connect, or when they import a league you shared.
+After that, their matches and yours reach each other without meeting, and a
+lost or wiped phone gets everything back once it's in the league again. With
+no internet nothing changes: the game plays and records matches as before,
+and sends them once it's back online. **Leave** stops syncing and keeps your
+matches.
+
+The server is a small Cloudflare Worker. Its source and deploy notes live in
+[`cloud/`](cloud/README.md). A copy of the game without one deployed simply
+doesn't offer cloud sync.
+
 ### Controls
 
 Slide your thumb anywhere on the screen and your paddle follows it. **Where the
@@ -193,13 +210,15 @@ framed between the statues; **Brera Arcade** — the columned courtyard of the
 Palazzo di Brera in soft daylight; **Alpi Sunset** — the Dolomites on fire
 over a long slope of snow.
 
-**A leaderboard** with no server behind it. Each phone stores its own match
+**A leaderboard** that needs no server. Each phone stores its own match
 history; when two phones connect they swap their whole histories and take the
 union, so both friends end up looking at the same table — standings, win rate,
 point difference, longest rally and head-to-head. Phones pass on every match
 they hold, not just their own, so a group of friends who mix partners ends up
 with one league. Friends who don't meet can **Share league** through any chat
-app and **Import league** on the other end. The **Heroes** tab shows each
+app and **Import league** on the other end — or turn on **Cloud sync**, and
+every phone in the league catches up by itself whenever it's online (see
+below). The **Heroes** tab shows each
 hero's win rate and share of points, and a tap splits a hero by player; with
 small samples it says "too early to tell" rather than guess. **Copy history**
 copies the matches as a CSV table, names hidden, for a bug report or a balance
@@ -238,6 +257,8 @@ js/
   data/
     leaderboard.js    local history, peer merging, standings and hero stats
     league.js         league codes and the history CSV
+    cloud.js          optional cloud league sync
+cloud/                the optional league-sync Worker, with deploy notes
 ```
 
 ---
