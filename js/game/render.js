@@ -57,6 +57,26 @@ export function drawFighter(ctx, char, cx, cy, px, t = 0) {
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * The notch, Dynamic Island and home indicator, in CSS pixels — zero on phones
+ * without them. env() is only visible to CSS, so it is read off a probe.
+ */
+function readSafeArea() {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;'
+    + 'padding:env(safe-area-inset-top) env(safe-area-inset-right) '
+    + 'env(safe-area-inset-bottom) env(safe-area-inset-left)';
+  document.body.appendChild(probe);
+  const cs = getComputedStyle(probe);
+  const px = (v) => Math.round(parseFloat(v) || 0);
+  const safe = {
+    top: px(cs.paddingTop), right: px(cs.paddingRight),
+    bottom: px(cs.paddingBottom), left: px(cs.paddingLeft),
+  };
+  probe.remove();
+  return safe;
+}
+
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -244,6 +264,7 @@ export class Renderer {
     this.dpr = 1;
     this.W = 0;
     this.H = 0;
+    this.safe = { top: 0, right: 0, bottom: 0, left: 0 };
     this.specialRect = null;
     this.resize();
   }
@@ -293,36 +314,44 @@ export class Renderer {
     // keys carry it), not on DPR or quality, so a Graphics switch — or the
     // automatic one, mid-match on a phone already struggling — costs no repaint.
     this.ap = this.artPixel();
+    this.safe = readSafeArea();
     this.layout();
   }
 
   layout() {
+    // Court and HUD share the safe area. A notch, Dynamic Island or home
+    // indicator gets backdrop only — never a name, a score or the button.
+    const s = this.safe;
     const pad = Math.round(this.W * 0.025);
-    const top = this.H * HUD_TOP;
-    const bottom = this.H * HUD_BOTTOM;
+    const safeH = this.H - s.top - s.bottom;
+    const top = s.top + safeH * HUD_TOP;
+    const bottom = s.bottom + safeH * HUD_BOTTOM;
     const availH = this.H - top - bottom;
+    const left = s.left + pad;
+    const right = this.W - s.right - pad;
     let ch = availH;
     let cw = ch * COURT_ASPECT;
-    if (cw > this.W - pad * 2) {
-      cw = this.W - pad * 2;
+    if (cw > right - left) {
+      cw = right - left;
       ch = cw / COURT_ASPECT;
     }
     this.court = {
-      x: Math.round((this.W - cw) / 2),
+      x: Math.round(left + (right - left - cw) / 2),
       y: Math.round(top + (availH - ch) / 2),
       w: Math.round(cw),
       h: Math.round(ch),
     };
-    const stripH = this.H - (this.court.y + this.court.h);
+    const stripH = this.H - s.bottom - (this.court.y + this.court.h);
     const bw = Math.min(this.W * 0.32, 160);
     const bh = Math.min(stripH * 0.52, 62);
     this.specialRect = {
-      x: this.W - bw - pad,
+      x: right - bw,
       y: this.court.y + this.court.h + (stripH - bh) / 2,
       w: bw,
       h: bh,
     };
-    this.pad = pad;
+    this.hudLeft = left;
+    this.hudRight = right;
     this.unit = this.court.w;      // one "court width" in screen pixels
   }
 
@@ -404,9 +433,11 @@ export class Renderer {
     let art = this.sceneLayer('backdrop', key,
       this.W + M * 2, this.H + M * 2, (octx, w, h) => scene.backdrop(octx, w, h));
     if (hud && !live) {
-      // A still backdrop gets its HUD scrim baked in: free every frame.
+      // A still backdrop gets its HUD scrim baked in: free every frame. The
+      // scrim follows the court's edges, which the safe area can move.
       const base = art;
-      art = this.sceneLayer('backdropHud', key, this.W + M * 2, this.H + M * 2, (octx, w, h) => {
+      const hudKey = `${key}:${this.court.y}:${this.court.h}`;
+      art = this.sceneLayer('backdropHud', hudKey, this.W + M * 2, this.H + M * 2, (octx, w, h) => {
         octx.drawImage(base, 0, 0);
         this.paintHudScrim(octx, w, h);
       });
@@ -983,55 +1014,57 @@ export class Renderer {
     const ctx = this.ctx;
     const c = this.court;
     const foe = 1 - view;
-    const pad = this.pad;
+    const left = this.hudLeft;
+    const right = this.hudRight;
 
     const nameScale = Math.max(2, Math.round(this.W / 130));
     const subScale = Math.max(1, nameScale - 1);
 
-    /* ---- opponent, in the strip above the court ---- */
-    const topH = c.y;
+    /* ---- opponent, in the strip above the court (below any notch) ---- */
+    const top0 = this.safe.top;
+    const topH = c.y - top0;
     const topScore = Math.max(3, Math.min(10, Math.floor((topH * 0.55) / 7)));
     const topScoreW = measure(String(m.scores[foe]), topScore);
 
-    drawText(ctx, names[foe].slice(0, 9), pad, topH * 0.10, {
+    drawText(ctx, names[foe].slice(0, 9), left, top0 + topH * 0.10, {
       scale: nameScale, color: chars[foe].color2, shadow: '#0b0616',
     });
-    drawText(ctx, chars[foe].name, pad, topH * 0.10 + nameScale * 9, {
+    drawText(ctx, chars[foe].name, left, top0 + topH * 0.10 + nameScale * 9, {
       scale: subScale, color: 'rgba(255,255,255,0.55)',
     });
-    drawText(ctx, String(m.scores[foe]), this.W - pad, topH / 2, {
+    drawText(ctx, String(m.scores[foe]), right, top0 + topH / 2, {
       scale: topScore, color: '#ffffff', outline: '#1a0d2b',
       align: 'right', baseline: 'middle',
     });
     const streak = m.streak || [0, 0];
     if (streak[foe] >= 3) {
-      drawText(ctx, 'X' + streak[foe], this.W - pad, topH / 2 + topScore * 4.5, {
+      drawText(ctx, 'X' + streak[foe], right, top0 + topH / 2 + topScore * 4.5, {
         scale: Math.max(1, Math.round(topScore / 3)), color: '#ff9b4a',
         align: 'right', baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
       });
     }
-    const topMeterW = Math.max(60, this.W - pad * 2 - topScoreW - 18);
-    this.meterBar(pad, topH * 0.10 + nameScale * 9 + subScale * 9 + 3,
+    const topMeterW = Math.max(60, right - left - topScoreW - 18);
+    this.meterBar(left, top0 + topH * 0.10 + nameScale * 9 + subScale * 9 + 3,
       topMeterW, Math.max(6, nameScale * 2), m.meter[foe], chars[foe], time, false);
 
-    /* ---- you, in the strip below the court ---- */
+    /* ---- you, in the strip below the court (above any home indicator) ---- */
     const botY = c.y + c.h;
-    const botH = this.H - botY;
+    const botH = this.H - this.safe.bottom - botY;
     const btn = this.specialRect;
     const botScore = Math.max(4, Math.min(12, Math.floor((botH * 0.52) / 7)));
     const scoreW = measure(String(m.scores[view]), botScore);
 
-    drawText(ctx, String(m.scores[view]), pad, botY + botH * 0.46, {
+    drawText(ctx, String(m.scores[view]), left, botY + botH * 0.46, {
       scale: botScore, color: '#ffffff', outline: '#1a0d2b', baseline: 'middle',
     });
     if (streak[view] >= 3) {
-      drawText(ctx, 'X' + streak[view], pad, botY + botH * 0.46 + botScore * 4.5, {
+      drawText(ctx, 'X' + streak[view], left, botY + botH * 0.46 + botScore * 4.5, {
         scale: Math.max(1, Math.round(botScore / 3)), color: '#ff9b4a',
         baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
       });
     }
 
-    const textX = pad + scoreW + 14;
+    const textX = left + scoreW + 14;
     drawText(ctx, names[view].slice(0, 9), textX, botY + botH * 0.16, {
       scale: nameScale, color: chars[view].color2, shadow: '#0b0616',
     });
@@ -1065,7 +1098,7 @@ export class Renderer {
     });
 
     if (rtt) {
-      drawText(ctx, rtt + 'MS', this.W - pad, this.H - 4, {
+      drawText(ctx, rtt + 'MS', right, this.H - this.safe.bottom - 4, {
         scale: 1, color: 'rgba(255,255,255,0.25)', align: 'right', baseline: 'bottom',
       });
     }

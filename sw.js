@@ -12,6 +12,7 @@ const ASSETS = [
   'icon.svg',
   'css/style.css',
   'js/main.js',
+  'js/diag.js',
   'js/ui/pixelfont.js',
   'js/ui/logo.js',
   'js/ui/screens.js',

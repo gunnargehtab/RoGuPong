@@ -8,6 +8,7 @@
 //            where a late packet is worth less than the next one
 
 import { packSignal, unpackSignal } from './sdp.js';
+import { log } from '../diag.js';
 
 const ICE_SERVERS = [
   // Only needed if the two phones somehow end up on different subnets; on the
@@ -22,6 +23,13 @@ const GATHER_SETTLE_MS = 400;
 // source — about five snapshots, past which the radio is stalling and every
 // queued packet is stale by the time it leaves.
 const STATE_BACKLOG_MAX = 4096;
+const HEARTBEAT_MS = 1500;
+// This long without a word from the other phone and it is given up on.
+const SILENCE_MS = 8000;
+// How long a link WebRTC calls 'disconnected' gets to come back. The state is
+// meant to be temporary — a WiFi power-save stall, a router blip, the other
+// phone's radio napping — and usually clears by itself within seconds.
+const DISCONNECT_GRACE_MS = 10000;
 
 function waitForIceGathering(pc) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -64,13 +72,24 @@ export class Peer {
     this.listeners = new Map();
     this.connected = false;
     this.closed = false;
+    this.createdAt = performance.now();
+    this.openedAt = 0;            // when the channels opened; 0 while still connecting
     this.lastSeen = 0;
     this.rtt = 0;
+    this.grace = null;            // timer while a 'disconnected' link gets its chance
+    this.stalledAt = 0;
 
     this.pc.addEventListener('connectionstatechange', () => {
       const s = this.pc.connectionState;
+      if (this.closed) return;
+      log(`link: ${s}`);
       this.emit('status', s);
-      if (s === 'failed' || s === 'closed' || s === 'disconnected') this.handleDrop(s);
+      if (s === 'disconnected') this.startGrace();
+      else if (s === 'connected') this.endGrace();
+      else if (s === 'failed' || s === 'closed') this.handleDrop(s);
+    });
+    this.pc.addEventListener('iceconnectionstatechange', () => {
+      if (!this.closed) log(`ice: ${this.pc.iceConnectionState}`);
     });
   }
 
@@ -136,7 +155,8 @@ export class Peer {
     ch.addEventListener('open', () => {
       if (this.ctl && this.ctl.readyState === 'open' && !this.connected) {
         this.connected = true;
-        this.lastSeen = performance.now();
+        this.openedAt = this.lastSeen = performance.now();
+        log(`link: open after ${((this.openedAt - this.createdAt) / 1000).toFixed(1)} s · ${this.candidates()}`);
         this.startHeartbeat();
         this.emit('open');
       }
@@ -162,8 +182,31 @@ export class Peer {
     this.hb = setInterval(() => {
       if (this.closed) return;
       this.raw(this.ctl, { t: 'ping', n: performance.now() });
-      if (performance.now() - this.lastSeen > 8000) this.handleDrop('timeout');
-    }, 1500);
+      // While the link is down, silence is expected and its grace decides.
+      if (!this.grace && performance.now() - this.lastSeen > SILENCE_MS) this.handleDrop('timeout');
+    }, HEARTBEAT_MS);
+  }
+
+  /**
+   * The link went 'disconnected'. Rather than drop on the spot, give it
+   * DISCONNECT_GRACE_MS to come back — the heartbeat holds its verdict
+   * meanwhile — and only then call it lost.
+   */
+  startGrace() {
+    if (this.grace || this.closed) return;
+    this.stalledAt = performance.now();
+    this.grace = setTimeout(() => this.handleDrop('disconnected'), DISCONNECT_GRACE_MS);
+    this.emit('stall');
+  }
+
+  endGrace() {
+    if (!this.grace) return;
+    clearTimeout(this.grace);
+    this.grace = null;
+    // The quiet was the stall's, not the other phone's: restart the clock so
+    // the heartbeat doesn't hold it against the link it just got back.
+    this.lastSeen = performance.now();
+    this.emit('recover', this.lastSeen - this.stalledAt);
   }
 
   handleDrop(reason) {
@@ -171,7 +214,29 @@ export class Peer {
     this.closed = true;
     this.connected = false;
     clearInterval(this.hb);
+    clearTimeout(this.grace);
+    this.grace = null;
     this.emit('drop', reason);
+  }
+
+  /**
+   * What kinds of address each end offered, e.g. "ours mdns×1 srflx×1 ·
+   * theirs mdns×1". Diagnostics only: it tells a WiFi that blocks phones from
+   * each other apart from one where they never learned where to look.
+   */
+  candidates() {
+    const kinds = (desc) => {
+      if (!desc) return 'none yet';
+      const seen = new Map();
+      for (const line of desc.sdp.split(/\r?\n/)) {
+        const m = line.match(/^a=candidate:\S+ \d+ \S+ \d+ (\S+) \d+ typ (\w+)/);
+        if (!m) continue;
+        const kind = m[2] === 'host' && m[1].endsWith('.local') ? 'mdns' : m[2];
+        seen.set(kind, (seen.get(kind) || 0) + 1);
+      }
+      return [...seen].map(([k, n]) => `${k}×${n}`).join(' ') || 'none';
+    };
+    return `ours ${kinds(this.pc.localDescription)} · theirs ${kinds(this.pc.remoteDescription)}`;
   }
 
   /* -------- sending -------- */
@@ -210,6 +275,8 @@ export class Peer {
   close() {
     this.closed = true;
     clearInterval(this.hb);
+    clearTimeout(this.grace);
+    this.grace = null;
     try { this.pc.close(); } catch { /* already gone */ }
   }
 }

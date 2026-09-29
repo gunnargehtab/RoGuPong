@@ -84,10 +84,17 @@ export function loadProfile() {
       flair: FLAIRS.some((f) => f.id === p?.flair) ? p.flair : 'none',
       music: p?.music !== false,
       sfx: p?.sfx !== false,
-      quality: p?.quality === 'low' ? 'low' : 'high',
+      // Only a Graphics choice made by hand is kept. Older builds also saved
+      // the frame-rate watcher's automatic switch — which on an iPhone in Low
+      // Power Mode fired at the 30 fps cap — so an unmarked 'low' is let go
+      // and the watcher takes a fresh look.
+      quality: p?.quality === 'low' && p?.qualityChosen ? 'low' : 'high',
+      qualityChosen: !!p?.qualityChosen,
     };
   } catch {
-    return { name: '', char: 'ro', flair: 'none', music: true, sfx: true, quality: 'high' };
+    return {
+      name: '', char: 'ro', flair: 'none', music: true, sfx: true, quality: 'high', qualityChosen: false,
+    };
   }
 }
 
