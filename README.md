@@ -85,7 +85,9 @@ moment it lands in the box.
 > code by paste rather than by scanning. The Camera app opens invites in
 > Safari, not in a copy of the game added to the home screen, and the two keep
 > separate names and histories (Share league and Import league move a history
-> from one to the other).
+> from one to the other). To join in the home-screen copy instead, copy the
+> invite link — long-press the Camera's banner, or have it sent as a message —
+> and paste it there. On an iPhone the game's sound follows the silent switch.
 
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
@@ -118,7 +120,9 @@ Not on the same WiFi? Pick **Online** on the connect screen.
 
 1. The host taps **Send an invite** and shares it through any chat app.
 2. The friend taps the invite in the chat. Their game opens, joins, and makes
-   a reply: they tap **Share reply** and send it straight back.
+   a reply: they tap **Share reply**, send it straight back, and **come back to
+   the game**. It can only connect while it's on screen — an iPhone stops a
+   page the moment you leave it.
 3. The host pastes the reply into the box under the invite, and you're in
    the lobby. Coming back from the chat app, the Paste button is lit up. On
    browsers that allow it, once you've let the game read the clipboard, it
@@ -127,6 +131,11 @@ Not on the same WiFi? Pick **Online** on the connect screen.
 **Keep your usual WhatsApp or FaceTime call going alongside** to talk while
 you play. Online, the game plays its music quieter for it. (On an iPhone, a
 call may silence the game's sound altogether.)
+
+Some chat apps (Instagram, Facebook, Snapchat, …) open links in a browser of
+their own, which closes the game for good when you go back to the chat to send
+your reply. The game spots those and asks you to open the page in Safari (or
+your browser) first; the invite goes along.
 
 There's no relay server in between, so some pairs of networks — mobile data
 especially — can't connect two phones directly. If yours won't, the game says

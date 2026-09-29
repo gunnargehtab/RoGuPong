@@ -81,7 +81,9 @@ canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
   display: flex;
   flex-direction: column;
   gap: 14px;
-  animation: pop 0.18s steps(3) both;
+  /* No fill mode: a transform held after the pop would make the screen a
+     stacking context of its own, and the scanlines would stripe the QR code. */
+  animation: pop 0.18s steps(3);
 }
 
 @keyframes pop {
@@ -262,7 +264,7 @@ tr.split td.num { padding-left: 5px; }
 
 .tabs { display: flex; gap: 6px; }
 .tabs button {
-  flex: 1; padding: 9px 4px; font-family: var(--font); font-size: 0.66rem;
+  flex: 1; min-height: 44px; padding: 9px 4px; font-family: var(--font); font-size: 0.66rem;
   letter-spacing: 0.1em; text-transform: uppercase; font-weight: 800;
   color: var(--dim); background: #170c2c; border: 3px solid #3d2a63; cursor: pointer;
 }
@@ -275,6 +277,9 @@ tr.split td.num { padding-left: 5px; }
   color: var(--dim); text-transform: uppercase;
 }
 .credit .heart { color: var(--red); }
+
+/* A fold's heading is its only handle: thumb-sized, like everything else. */
+summary { padding: 12px 0; cursor: pointer; }
 
 /* A quiet link-style button, for things only a bug report needs. */
 .textbtn {

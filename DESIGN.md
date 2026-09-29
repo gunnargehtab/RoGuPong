@@ -604,9 +604,35 @@ iPhone should be the one that joins — it can host, but takes the reply by past
 A third is easy to trip over: the Camera app opens the link in Safari (or
 whichever browser is the default), never in a copy of the game added to the
 home screen, and the two keep separate storage — name, match history, flair
-and offline copy. On iPhones the join screen says so in a line. The game also
-asks Safari for persistent storage, so the history isn't cleared when the
-phone runs short of space or the site goes unvisited for a while.
+and offline copy. On iPhones the join screen says so in a line, and in the
+home-screen app it adds the way round: copy the invite link (long-press the
+Camera's banner, or have it sent as a message) and paste it there. A player
+who arrives by link skips the connect screen and its name box, and Safari
+may well hold no name, so the reply screen asks for one while it waits for
+the host — the `hello` only goes out once the link opens. The game also asks
+Safari for persistent storage, again after each match while it is refused.
+That guards against clearing when the phone runs short of space; Safari's
+own clearing of a site left unvisited for weeks spares only the home-screen
+app, and a friend's history refills the rest on the next connect (§8).
+
+iOS draws a home-screen icon only from an `apple-touch-icon` bitmap, never
+the manifest's SVG, and the game ships no images — so on iPhones it paints
+`icon.svg` into a 180 px canvas at startup and links that, for Add to Home
+Screen to find.
+
+Online, a phone's own camera plays no part, and two more iPhone traits
+matter. An iPhone stops a page the moment it leaves the screen, WebRTC
+included, so a guest who switches to the chat app to send its reply can't
+answer the host's checks until it comes back. The reply screen asks it to
+come straight back and keep the screen open, says so again when it does, and
+the host's hint and Couldn't connect name it. And an invite tapped in some
+chat apps (Instagram, Facebook, Snapchat, …) opens in the app's own browser,
+which keeps its own storage and closes the page for good when the player
+leaves it for the chat. The game spots one by its user agent — on iOS every
+real browser, Chrome and Firefox included, says `Safari/` and an embedded
+view doesn't; on Android it says `wv` — and says to open the page in Safari
+first. There the invite stays in the address, so the app's Open in Safari
+carries it along; the link opening clears it.
 
 Decoding QR in JavaScript would have covered every combination including two
 iPhones. It was started and then deliberately dropped: roughly seven hundred
@@ -624,7 +650,9 @@ take its reply gets the same hint after 45 s (150 s online). A handshake that
 never connected ends on **Couldn't connect**, never on Link Lost. That screen
 says which side it was ("The connection never came up. Did the host scan your
 reply?") and offers Try again, which starts the same side over in the same
-mode.
+mode. Time the page spends off screen while connecting doesn't count against
+those limits: the page couldn't take its part meanwhile, and on iOS it is
+stopped outright.
 
 When a link that was up drops unasked, both phones go straight back into the
 handshake on the same sides, under a **Reconnecting** banner that says what
@@ -684,7 +712,9 @@ codes travelling through a chat app instead of a camera:
   tried and dropped: Chrome ignores a remote candidate it has already seen.
   What sets the real window is how long the guest's router keeps the way back
   open after the guest's checks stop, so both screens ask for the codes to be
-  swapped promptly.
+  swapped promptly. The guest has to be back on screen by then, too: an
+  iPhone stops the page, WebRTC with it, while the player is in the chat app
+  (§6, iPhones).
 - **Honest failure.** About one pair in five — mobile networks behind carrier
   NAT mostly — can't connect without a TURN relay. That would be a server to
   run or pay for, so there is none. Those pairs get "Couldn't connect over the
@@ -693,7 +723,11 @@ codes travelling through a chat app instead of a camera:
 The players talk over their usual call app, running alongside. No browser
 says when a call is on, so the music simply plays at about a third of its
 level while an online link is up. On iOS a call may silence the page's sound
-altogether. Lag is made up for as §5 describes.
+altogether. Where Safari lets a page choose (Safari 17 on), the game asks for
+`ambient` audio, which mixes with the call rather than cutting into it and
+follows the silent switch, as game sound should — the title screen says so on
+iPhones, for whoever wonders where the sound went. Lag is made up for as §5
+describes.
 
 ---
 
@@ -903,11 +937,14 @@ but takes nothing back out of the league.
 | Online, the networks can't be connected directly | Couldn't connect over the internet, with the advice to try a WiFi or a phone hotspot. There is no relay (§6) |
 | An online invite finds no internet address | Refused as NO INTERNET before anyone waits on it |
 | An online reply is pasted late | The guest's link reads `failed` after ~15 s but stays open, and the host's first check brings it up (§6) |
+| An iPhone guest stays in the chat app after sending its reply | Its reply screen asks it to come back and keep the screen open, and says so again when it does; the host's hint and Couldn't connect name it (§6) |
+| An invite opens in a chat app's own browser | The screen says leaving it closes the game, and to open the page in Safari first; the invite stays in the address so it goes along (§6) |
+| Share fails (a chat app's browser) or the clipboard is out of reach | The invite, reply or report is put on screen, selected for a long-press copy |
 | An old online invite | Its stamp says how old it is; over 10 minutes both phones flag it |
 | A slow link (online) | The guest draws the ball ahead and gets grace for its saves (§5); the lobby notes a laggy connection above 120 ms |
 | The link blips (WiFi power save, a router hiccup) | WebRTC calls it `disconnected`; the game waits at least 10 s for it to recover, with a toast, before calling it lost |
 | The other phone goes silent | The heartbeat gives up after 8 s with nothing heard in a match, 30 s anywhere else, and shows the Link Lost screen |
-| This phone leaves the screen | No verdict on the link while it's hidden, nor for a couple of heartbeats after it comes back |
+| This phone leaves the screen | No verdict on the link while it's hidden, nor for a couple of heartbeats after it comes back — or after any heartbeat that fires late |
 | A phone leaves the screen mid-match | The match holds on both phones, and the waiting one shows a pause screen with emotes and quick-chat. It resumes with a 3 s countdown, or is called off after 30 s |
 | A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
 | A link drops unasked | Both phones go straight back into the handshake on the same sides, lobby state kept (§6) |
@@ -922,6 +959,7 @@ but takes nothing back out of the league.
 | A screen would sleep | A wake lock is held whenever a connection is up or being made, and asked for again each time the page comes back |
 | Audio interrupted (a call, Siri, an app switch) | Resumed when the page comes back and on the next touch, mid-match included |
 | No internet on the second visit | Service worker serves the whole game from cache |
+| The site answers with an error page (a deploy midway) | The service worker serves its cached copy instead, and never caches the error |
 | The phone can't hold 45 fps | Demoted to the cheap render path within seconds, for the session (see below) |
 
 **Keeping the link.** The heartbeat's patience depends on where the players
@@ -942,6 +980,8 @@ A hidden page passes no verdicts at all: its timers are throttled or stopped,
 and on iOS the whole page is parked, so its heartbeat would only be judging its
 own absence. Coming back, it pings at once and gives the replies a couple of
 heartbeats to land before judging, since what it missed is still on its way in.
+A heartbeat that fires well past its time gets the same grace, whatever the
+page says: iOS may run the overdue timer before it tells the page it is back.
 The wake lock matters as much as all this: a phone that dims and locks pauses
 the page. So the lock is held from the moment a handshake starts until the
 phones part. Browsers drop it whenever the page hides (iOS on every
@@ -961,8 +1001,8 @@ back too late, ends it too, even if that word hasn't reached it yet. A match
 called off this way lands on the Link Lost screen under its own title, naming
 who was away. While the friend is away the heartbeat's patience stretches to
 35 s, so the pause's own verdict, which says what actually happened, always
-comes first. The link stalling meanwhile raises no hiccup toast either: iOS
-parks the away phone's end of the link along with its page. The pause needs
+comes first. The link stalling meanwhile raises no hiccup toast either, on
+either phone: iOS parks the away phone's end of the link along with its page. The pause needs
 protocol 4 on both phones. Against an older build nothing holds, and 8 s of
 silence in a match still ends it.
 
@@ -977,12 +1017,15 @@ problem from a paused phone. It comes from the same `away` messages. Builds
 from before them never send them, so nothing but the pause and the diagnostics
 depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
 the title screen, copies that with a description of the phone (browser,
-home-screen app or tab, safe area, graphics and frame rate, audio and
-wake-lock state) and a log of the last 60 moments that matter: the page hiding
-and coming back, link and ICE states, drops, audio and wake-lock interruptions,
-errors. The log lives in `sessionStorage`, so it survives the reload iOS does
-after throwing a background tab away. No player names go in it, because
-reports get pasted into public issues.
+home-screen app, a chat app's own browser or a tab, safe area, graphics and
+frame rate, audio and wake-lock state) and a log of the last 60 moments that
+matter: the page hiding and coming back, link and ICE states, drops, audio and
+wake-lock interruptions, storage refused or full, a share that failed, errors.
+The log lives in `sessionStorage`, so it survives the reload iOS does after
+throwing a background tab away. No player names go in it, nor in the report's
+account of the last drop, because reports get pasted into public issues. From
+iOS 26 Safari's user agent stops counting the system version at 18.6, so the
+report reads it from Safari's own version, which now matches it.
 
 **The cheap render path.** A budget phone's GPU is fill-rate-bound, and the
 game's look is mostly full-screen fills, so `low` quality attacks exactly that:

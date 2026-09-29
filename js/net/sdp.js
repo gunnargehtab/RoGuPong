@@ -323,6 +323,11 @@ async function packFull(sdp, role, stamp) {
 async function unpackFull(code) {
   const bytes = b32decode(code.slice(TAG_FULL.length));
   const body = bytes.slice(1);
+  // Safari only unpacks from iOS 16.4; before that, say so rather than
+  // surface the missing name.
+  if (bytes[0] === 1 && typeof DecompressionStream !== 'function') {
+    throw new Error('this browser is too old to read that code — update it and try again');
+  }
   const raw = bytes[0] === 1 ? await inflate(body) : body;
   const text = new TextDecoder().decode(raw);
   const stamp = STAMP_RE.exec(text);

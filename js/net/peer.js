@@ -242,13 +242,18 @@ export class Peer {
    * Ping every HEARTBEAT_MS, and give the link up once the other phone has
    * been quiet for longer than the app's patience. A hidden page passes no
    * verdicts at all: its timers are throttled or stopped, and whatever it
-   * missed meanwhile is still on its way in.
+   * missed meanwhile is still on its way in. Nor does a beat that comes
+   * late: the page was stopped (iOS may run the overdue timer before telling
+   * the page it is back), and its silence was its own.
    */
   startHeartbeat() {
     clearInterval(this.hb);
+    let last = performance.now();
     this.hb = setInterval(() => {
       if (this.closed) return;
       const now = performance.now();
+      if (now - last > HEARTBEAT_MS * 3) this.judgeFrom = Math.max(this.judgeFrom, now + HEARTBEAT_MS * 2);
+      last = now;
       this.raw(this.ctl, { t: 'ping', n: now });
       if (document.hidden || now < this.judgeFrom || now - this.lastSeen <= this.patience()) return;
       // A link that is down gets its grace however patient the app is.
