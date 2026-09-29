@@ -65,6 +65,8 @@ the sides — still fits everything, just small.
 | Speed ramp | ×1.035 per hit | Doubles over ~20 returns |
 | Speed ceiling | 1.75, rising with rally heat | ~0.6 s to cross at the cap |
 | Paddle speed | 2.35 court-widths/s | A full-court recovery is *just* possible |
+| Heading floor | 35% of the speed toward a goal | No ball rattles wall to wall |
+| Lean | up to 1.6×, below 55% toward a goal | No ball crosses slower than a 57° one |
 
 That last row is the most important number in the game. It is tuned so a
 committed player can reach a ball hit to the far corner, but only barely and
@@ -73,9 +75,57 @@ slower and wide angles become unreturnable and the whole angle-control system
 stops mattering.
 
 **Angle control.** Where the ball meets the paddle sets the departure angle, up
-to about 60° off vertical. Paddle motion at the moment of contact adds a
-further ±20°, which is what lets a player "carry" the ball sideways. Both are
-clamped so nothing ever leaves flatter than a returnable angle.
+to 60° off vertical at the very edge. Paddle motion at the moment of contact
+adds up to 10° more for GU and 15° for NEO, which is what lets a player
+"carry" the ball sideways. (The code clamps motion at ±20°, but no hero's
+paddle moves fast enough to reach it.) Those are angles in court units. The
+court is only 0.56 as wide as it is tall, so on screen an edge hit leaves at
+about 44°, and paddle motion swings a return 6–9° from a centre hit or 11–15°
+near the edge. Nothing leaves flatter than the heading floor below: about 70°
+in court units, 56° on screen.
+
+**Every ball keeps heading somewhere.** Flat balls used to be the dullest
+thing in the game. A return could leave at 72°, where only 31% of its speed
+carries it toward the other goal. At early-rally pace it took 3.7 s to cross,
+against 1.2 s for a straight one, and on screen it moved at 62% of a straight
+ball's speed, visibly crawling from wall to wall. Worse were stuck balls,
+untouched for more than 8 s: about 29 per 100 bot matches, one of them for
+133 s. Paddle returns weren't the cause. CURVE's spin bends a ball toward flat
+(about 55% of stuck balls), multiball fans its extras ±0.42 rad around an
+already flat heading (30%), and QUAKE reversed balls that were already flat
+(15%). Two host-side rules fix it:
+
+- **The floor.** Every free ball keeps at least 35% of its speed heading for a
+  goal (`MIN_VY`). It is applied after a return, on every step after spin
+  bends the ball, to multiball's extras and after a QUAKE. It generalises the
+  SPIRE's old rule. A CURVE still bends, but it can't go flat.
+- **The lean.** A ball flatter than about 57° travels faster than its speed
+  says: its speed toward the goal never drops below 55% of its speed
+  (`LEAN_K`). That is a boost of at most 1.6× (`LEAN_MAX`), which the floor
+  never quite needs. The path and the wall bounces don't change, so the ball
+  just gets there sooner. No ball takes longer to cross than a 57° one: 2.4 s
+  at serve pace and 1.8 s at 0.8, against 3.7–4.1 s and 2.9–3.2 s before.
+  The lean never lifts a ball past the rally's current speed ceiling (or a
+  beach ball's), so only slow balls get help. Two shots keep their own tuning
+  and get no lean: a MAGNET fling until the next paddle touch, and an ARCO
+  bend.
+
+In the bot tournament behind these rules, stuck balls went to none, and early
+crossings over 2 s fell from 4.1% to 0.8%, with none over 3 s. Flat returns
+won the point outright about 2.5× as often, so aiming wide pays again: NEO's
+"deeply unfair angles" are back. A CURVE's average crossing dropped from 1.8 s
+to 0.9 s. Options rejected on the way:
+
+- A tighter 60° clamp barely helped, because returns are mostly under 60°
+  already.
+- A 0.50 floor deleted every return over 60°, NEO's included.
+- The 0.35 floor alone still left flat returns taking 2–3.4 s.
+- A speed-up on each wall bounce sped up the whole game and left stuck balls.
+- A speed-up while a ball goes untouched was hard to read and left stuck
+  balls too.
+
+The snapshot carries the velocity a ball actually travels at, so the guest
+needs to know nothing about either rule.
 
 ---
 
@@ -84,31 +134,68 @@ clamped so nothing ever leaves flatter than a returnable angle.
 Six fighters. Nobody is strictly better: wide paddles are slow, fast paddles
 are small, and every special costs a full meter.
 
-| | Paddle | Speed | Special | What it does |
-| --- | --- | --- | --- | --- |
-| **RO**, the Crimson Comet | 1.00 | 1.05 | AFTERBURN | Next return leaves at ~1.9× speed, trailing fire |
-| **GU**, the Azure Bulwark | 1.35 | 0.85 | AEGIS | A barrier behind the paddle saves one ball, then shatters |
-| **NEO**, the Neon Trickster | 0.80 | 1.28 | CURVE | Next return bends through the air for three seconds |
-| **BRIO**, the Bronze Bruiser | 1.12 | 0.95 | QUAKE | Slams every ball back and bogs the rival's paddle down |
-| **MAG**, the Junkyard Magnet | 1.05 | 0.92 | MAGNET | Catches the next ball; slide to aim, it flings back at 1.3× |
-| **BOO**, the Friendly Phantom | 0.85 | 1.18 | PHANTOM | Next return turns the ball into a ghost for three seconds |
+| | Paddle | Speed | Meter | Special | What it does |
+| --- | --- | --- | --- | --- | --- |
+| **RO**, the Crimson Comet | 1.00 | 1.05 | 1.00 | AFTERBURN | Next return leaves at ~1.9× speed, trailing fire |
+| **GU**, the Azure Bulwark | 1.35 | 0.85 | 0.95 | AEGIS | A barrier over 0.4 of the goal saves one ball within 6 s; a second press that point raises a midline wall |
+| **NEO**, the Neon Trickster | 0.80 | 1.28 | 1.05 | CURVE | Next return bends through the air for three seconds |
+| **BRIO**, the Bronze Bruiser | 1.12 | 0.95 | 0.95 | QUAKE | Slams every ball on the rival's side back at them and bogs their paddle down for 1 s |
+| **MAG**, the Junkyard Magnet | 1.12 | 1.00 | 1.00 | MAGNET | Catches the next ball; slide to aim, it flings back at 1.45× |
+| **BOO**, the Friendly Phantom | 0.85 | 1.18 | 1.05 | PHANTOM | Next return turns the ball into a ghost for three seconds |
 
 The specials are deliberately of two kinds. AFTERBURN, CURVE and PHANTOM are
 *armed* — they wait for your next hit, so using them well means choosing which
 rally to spend them on. AEGIS and QUAKE are *immediate* — they change the
 board the moment you fire them. MAGNET sits between the two: it arms
-the paddle, but the payoff is interactive — the caught ball rides the paddle
-for a second and the drag is the aim: however far you haul it from where it
+the paddle, but the payoff is interactive. The caught ball rides the paddle
+for 0.6 s and the drag is the aim: however far you haul it from where it
 was caught sets the launch angle, so dragging across the court slings a sharp
 diagonal and holding your ground fires it dead straight. Position rather than
 velocity, deliberately — no split-second flick timing required of a
-seven-year-old thumb. A quake breaks the catch: the ball is slammed off the
-magnet and comes back as a plain unaimed return, which keeps BRIO an honest
-answer to a MAG who camps.
+seven-year-old thumb. A magnetised paddle reaches a little wider than a
+bouncing one (1.6 half-widths from its centre instead of 1.12), and the catch
+earns meter like any return. A quake breaks the catch: the ball is slammed off
+the magnet and comes back as a plain unaimed return, which keeps BRIO an
+honest answer to a MAG who camps.
+
+**AEGIS** raises a barrier across 0.4 of GU's goal, centred where GU stood when
+pressing. It saves one ball, or runs out after 6 s, blinking through its last
+second. A ball wide of it is a goal. **The second press in the same point
+raises a wall on the midline** instead, on the same terms: 0.4 of the court
+wide, centred where GU stood, one save, six seconds. It works whether or not
+the barrier still stands. Each press costs a full meter, so the wall is a
+reward for a long rally of about twelve hits or more. The wall is one-way: it
+stops only balls heading for GU's goal, so GU's own shots sail through, and
+chevrons on it point the way it sends balls. It can't be sneaked past, because
+collisions are checked along the ball's whole path, and a block ends a CURVE
+or an ARCO bend. With multiball, the first ball to reach it uses it up. A
+caught ball isn't stopped, only the fling that follows it.
+
+A wall that close to the rival could have been a counter-attack: a ball
+bounced back from the midline leaves the rival half the court to react in,
+about 0.3 s at a high pace. So a block drops the ball to serve speed, which
+gives even the slowest paddle, BRIO's, about 0.67 s. The snowdrift already
+follows the same rule: a save, not a counter-attack. Like a barrier save, a
+wall block makes GU the ball's owner and earns no rally or meter credit.
+BRIO's QUAKE shatters the wall, which would otherwise bat the quake straight
+back, and that keeps BRIO the hard counter. Crates never collide with walls,
+so they drift straight across it. One wall at a time: pressing while one
+stands is refused. Every press after the first in a point raises a wall.
+
+**QUAKE** is an attack, not a panic button. It sends every ball on the rival's
+side back at them, and it rips a caught ball off a magnet. A ball already on
+BRIO's half and bearing down on BRIO's goal is left alone, because BRIO has to
+return that one. The rival's paddle is bogged down at half speed for a second.
+
+**A press that would change nothing is refused**, and the meter stays full:
+arming AFTERBURN, CURVE or PHANTOM while it is already armed, a MAGNET that is
+already waiting, or a second midline wall. Before, such a press emptied a full
+meter for nothing.
 
 **The meter** fills at 0.17 per return you make plus a slow trickle of 0.022/s,
-so an aggressive rallying player charges in about five exchanges and a passive
-one still gets there eventually.
+each scaled by the hero's meter rate in the table, so an aggressive rallying
+player charges in about five exchanges and a passive one still gets there
+eventually.
 
 **The meter lives on the paddle**, because that is where the player is already
 looking. A strip inside each paddle fills left to right with the charge; once
@@ -134,10 +221,53 @@ removing it is what gave the court its extra 12% (§2). The first time your
 meter fills, TAP PADDLE stands over your paddle until you have fired once;
 the profile remembers, so it is taught once per phone.
 
-**Balance version.** The numbers above are balance version 1 (`BALANCE` in
+**Balance version.** The numbers above are balance version 2 (`BALANCE` in
 `characters.js`). Every match record carries the version it was played at, so
 any change here — or to how a special plays out — bumps it, and the Heroes
 tab can then show win rates since the patch (§8).
+
+*Version 2* was the first balance pass, made before there was much real match
+data. It came from a read of each special in the code and a headless bot
+tournament on the real `Match`: all 30 pairings, 1,200 matches a run, crates
+on, with a "kid" and an "adult" bot skill. In version 1, BRIO won 92%/95% of
+the bot matches and GU 83%/83%, while MAG won only 11%/13%. NEO (45%/39%), BOO
+(39%/35%) and RO (32%/37%) sat in between. Bots are perfect at some things
+(they never hesitate over the special) and bad at others (aiming MAG's fling),
+so the numbers are a direction, not the truth. The Heroes tab's real matches
+decide the next pass.
+
+- **GU.** AEGIS was a full-width free life that never expired: its 6 s
+  duration was never counted down, so the best play was to fire it the moment
+  it lit up. GU also had the fastest meter (1.10). Now the barrier runs out
+  after 6 s and covers 0.4 of the goal where GU stood, and the meter rate
+  drops to 0.95. The rule fix alone brought GU to about 65%. Leaving GU as it
+  was would have been worse once BRIO was fixed: QUAKE was GU's only real
+  counter, and GU would have won about 95%.
+- **BRIO.** QUAKE was a guaranteed save *and* a counter-attack. It sent every
+  ball back from anywhere, even one already behind BRIO's paddle, sped it up
+  ×1.15 and slowed the rival for 2.5 s. BRIO won 81–90% of the points in which
+  it used QUAKE. Now it leaves balls on BRIO's half heading at BRIO's goal
+  alone, with no speed-up, and slows the rival for only 1.0 s. The rule change
+  alone left the adult bots at about 81%, so the numbers went too.
+- **MAG.** MAGNET added almost nothing: MAG's point win rate was about the
+  same with or without it. MAG was narrower and slower than BRIO, couldn't
+  save a ball it couldn't reach, showed its aim for a full second, and a catch
+  earned no meter. Now the paddle is 1.12 (was 1.05) and the speed 1.00 (was
+  0.92), the magnet catches out to 1.6 half-widths (was 1.12), the hold lasts
+  0.6 s (was 1.0) and the fling hits ×1.45 (was ×1.3). A catch also earns
+  meter.
+- **Unchanged:** RO, NEO and BOO, and GU's width and speed. With specials off,
+  which of width and speed wins depends on how precise thumbs are. With
+  perfect aim NEO won 90% and GU 32%; with 3–5 mm of thumb error it was the
+  reverse. So those numbers wait for real data.
+
+For the whole package the bots estimated every hero between 26% and 66%, down
+from 11–95%. The kid bots gave RO 45%, GU 59%, NEO 61%, BRIO 43%, MAG 37% and
+BOO 54%; the adult bots gave 50%, 66%, 51%, 63%, 26% and 45%. MAG stays lowest
+for the adult bots, but bots are worst at exactly MAG's skill, aiming the
+fling. GU's midline wall and the heading floor and lean (§2) came in the same
+release; the floor and lean moved hero win rates only within noise, and
+slightly toward parity.
 
 ---
 
@@ -205,9 +335,10 @@ The signature crates carry valves of their own:
   each wall, so a ball always fits past. Collision is tested along the ball's
   whole path in true court proportions, so nothing tunnels through, and a
   spire rising onto a ball pushes it clear. A bounce keeps the ball's speed and
-  its last toucher, and always leaves at least 35% of the speed vertical — a
-  glancing hit can't go flat and rattle between spire and wall. One per player;
-  a second pick moves it.
+  its last toucher, and like every ball (§2) it leaves with at least 35% of its
+  speed vertical, here heading away from the spire, so a glancing hit can't go
+  flat and rattle between spire and wall. One per player; a second pick moves
+  it.
 - **ARCO** bends only the picker's own returns, and the bend ends on the next
   touch of anything — paddle, wall, spire, the rival's AEGIS — so it never leaks
   into the reply. The spin scales with the shot's width and with pace
@@ -290,16 +421,21 @@ stalling radio only ever adds latency.
 Between snapshots the guest extrapolates ball positions along their last known
 velocity, which on a LAN's few milliseconds of latency is visually exact. In
 testing, host and guest ball positions stayed within about 0.01 of the court of
-each other. The stage objects the signature crates raise — spires and
-snowdrifts — travel in each snapshot as a short list (kind, position, size,
-time left, owner, blocks), and the guest bounces its extrapolated balls off
-them with the same geometry the host uses (no scoring, no events), so a ball
-never sails through a spire for a frame while the correction is in flight.
-REFLECTION and ARCO ride as seconds-left values on the ball and paddle entries,
-so the decoy's fade and the badge's last-second blink match on both phones.
-Every new field is appended to the end of its array, so a phone still on an
-older build never trips over it — and a guest ignores prop kinds it doesn't
-know.
+each other. The ball velocities in a snapshot are the ones the balls actually
+travel at, the lean (§2) included, so the guest extrapolates a flat ball at
+its real pace without knowing the rule. The stage objects — the signature
+crates' spires and snowdrifts, and GU's midline wall — travel in each snapshot
+as a short list (kind, position, size, time left, owner, blocks), and the guest
+bounces its extrapolated balls off them with the same geometry the host uses
+(no scoring, no events), so a ball never sails through a spire for a frame
+while the correction is in flight. REFLECTION, ARCO and the AEGIS barrier ride
+as seconds-left values on the ball and paddle entries, so the decoy's fade and
+the badge's and barrier's last-second blinks match on both phones. The
+barrier's position is appended after them. Its seconds-left value never drops
+under 0.1 while it stands, so a build that reads it as an on/off flag still
+sees it. Every new field is appended to the end of its array, so a phone still
+on an older build never trips over it — and a guest ignores prop kinds it
+doesn't know.
 
 **Mixed builds.** The service worker makes the game playable offline, which
 also means a phone that last loaded it before an update keeps running the old
@@ -314,12 +450,23 @@ what both can show: every crate carries the first protocol whose phones can
 draw it, and a host leaves out anything newer than the other phone's from the
 stage's pool (its lobby lists what's off). An older host simply deals what its
 own build knows — all of which a newer guest can draw — so a guest facing one
-says the host picks the crates rather than guessing. The rules never diverge
-either way — the host decides everything — so this is about both players
-seeing the same court, not about keeping score. (The first build with stage
-crates predates the number, so it too reads as 1: the signature crates stay off
-against it until it's reloaded — conservative, but never a court one phone
-can't draw.)
+says the host picks the crates rather than guessing. GU's midline wall follows
+the same rule: it needs protocol 3 on both phones, because an older guest would
+see the ball bounce off nothing, to the spray and thump of a snowdrift. Without
+it, a second AEGIS press just raises the barrier again once the first has
+gone. The rules never diverge either way — the host decides everything, balance
+version included — so this is about both players seeing the same court, not
+about keeping score. An older guest does draw a newer host's AEGIS wrong: it
+knows nothing of the barrier's position, so it draws it across the whole goal. A newer guest facing an older host draws that host's
+full-width barrier as it is. (The first build with stage crates predates the
+number, so it too reads as 1: the signature crates stay off against it until
+it's reloaded — conservative, but never a court one phone can't draw.)
+
+| Protocol | What it added |
+| --- | --- |
+| 1 | Everything before the number existed |
+| 2 | The stage crates: REFLECTION, SPIRE, ARCO, AVALANCHE |
+| 3 | Balance version 2: the narrower, timed AEGIS barrier and GU's midline wall |
 
 Anything that must not be lost — character picks, the match start, the final
 result, emotes, the guest's special press — goes on a second, **reliable

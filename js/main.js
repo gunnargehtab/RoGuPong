@@ -37,7 +37,13 @@ const HISTORY_CHUNK = 40;
 // phones on the same build to look right — snapshot fields a guest has to draw,
 // crates it has to know — and tag new crates with it (items.js `since`). Builds
 // from before the number existed send none, which reads as 1.
-const PROTOCOL = 2;
+//   2  stage crates (REFLECTION, SPIRE, ARCO, AVALANCHE)
+//   3  balance version 2: the narrower AEGIS barrier's position rides the
+//      snapshot, and GU's midline wall is a prop older builds can't draw
+const PROTOCOL = 3;
+// GU's midline wall waits for both phones to speak this: an older guest would
+// see the ball bounce off nothing, to the sound and spray of a snowdrift.
+const MIDLINE_SINCE = 3;
 // How far back predictPaddle remembers where our own paddle has been. Sized to
 // cover the whole staleness of the echoed paddle position with room to spare:
 // input send interval + RTT + host frame (and its up-to-6-step backlog) +
@@ -524,8 +530,12 @@ class App {
     this.balance = Number.isInteger(balance) && balance > 0 ? balance : 1;
     // The stage deals its own crates: its pool, minus anything newer than the
     // older phone's build. Only the host's copy is ever rolled, so the pool
-    // never has to travel.
-    this.match = new Match({ chars, stage, target, seed, party, items: this.stageCrates(this.stage) });
+    // never has to travel — and likewise for GU's midline wall.
+    this.match = new Match({
+      chars, stage, target, seed, party,
+      items: this.stageCrates(this.stage),
+      midline: this.sharedProtocol() >= MIDLINE_SINCE,
+    });
     this.finishing = false;
     this.pendingResult = null;
     this.simAccum = 0;

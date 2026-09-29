@@ -112,11 +112,12 @@ You are always the paddle at the bottom of your own screen.
 
 **Six fighters**, each with one signature move and a different paddle feel:
 **RO** (all-rounder, AFTERBURN — a near-double-speed return), **GU** (wide and
-slow, AEGIS — a barrier that saves one ball), **NEO** (small and fast, CURVE —
-bends the ball through the air), **BRIO** (heavy, QUAKE — slams every ball back
-and bogs the rival down), **MAG** (patient, MAGNET — catches the next ball so
-you can aim it, then flings it back fast), **BOO** (small and spooky, PHANTOM —
-your next return turns into a ghost).
+slow, AEGIS — a barrier behind you that saves one ball; fire it again in the
+same point and a wall rises on the midline), **NEO** (small and fast, CURVE —
+bends the ball through the air), **BRIO** (heavy, QUAKE — slams every ball on
+the rival's side back at them and bogs them down), **MAG** (patient, MAGNET —
+catches the next ball so you can aim it, then flings it back fast), **BOO**
+(small and spooky, PHANTOM — your next return turns into a ghost).
 
 **Item crates** drift through the middle of the court, and every stage deals
 its own four. Multiball drops everywhere; each court adds two classics that

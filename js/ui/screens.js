@@ -801,19 +801,19 @@ export class Screens {
       const who = esc(theirName || 'your friend');
       const notice = document.createElement('div');
       notice.className = 'panel tight notice';
-      // An older host picks the crates itself, so only a host can promise
-      // which ones stay off.
+      // An older host runs the match on its own rules, so only a host can
+      // promise what stays off.
       const crateNote = isHost
-        ? 'the newest crates stay off — their phone might not be able to show them'
-        : 'their older game picks the crates';
+        ? 'the newest crates and moves stay off — their phone might not be able to show them'
+        : 'their older game picks the crates and plays the old hero balance';
       notice.innerHTML = theirsOlder
         ? `<h3 class="warn">${who}&rsquo;s game is out of date</h3>
           <p style="margin-top:4px">You can still play, but ${crateNote}. Once their
           phone has internet, they can reload RoGuPong to update it, then you reconnect.</p>`
         : `<h3 class="warn">This phone&rsquo;s game is out of date</h3>
           <p style="margin-top:4px">${who} has a newer version. You can still play, but
-          the newest crates stay off. Once this phone has internet, reload RoGuPong to
-          update it, then reconnect.</p>`;
+          the newest crates and moves stay off. Once this phone has internet, reload
+          RoGuPong to update it, then reconnect.</p>`;
       wrap.appendChild(notice);
     }
 

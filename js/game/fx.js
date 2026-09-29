@@ -172,6 +172,14 @@ export class Fx {
 const MIRROR = itemById('mirror');
 const ARCO = itemById('arco');
 
+/** An AEGIS save — the barrier's, or the midline wall's. */
+function blocked(ev, fx, audio) {
+  fx.burst(ev.x, ev.y, { count: 34, color: '#9df3ff', color2: '#ffffff', speed: 0.9, spread: 3.2, life: 0.7 });
+  fx.ring(ev.x, ev.y, { color: '#9df3ff', to: 0.35, life: 0.5, width: 0.012 });
+  fx.text(ev.x, ev.y - 0.06, 'BLOCKED', { color: '#9df3ff' });
+  audio?.shield();
+}
+
 /**
  * Turn a simulation event into noise and light. Kept next to the Fx class so
  * every visual reaction to the rules lives in one readable place.
@@ -232,10 +240,7 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       break;
     }
     case 'shield':
-      fx.burst(ev.x, ev.y, { count: 34, color: '#9df3ff', color2: '#ffffff', speed: 0.9, spread: 3.2, life: 0.7 });
-      fx.ring(ev.x, ev.y, { color: '#9df3ff', to: 0.35, life: 0.5, width: 0.012 });
-      fx.text(ev.x, ev.y - 0.06, 'BLOCKED', { color: '#9df3ff' });
-      audio?.shield();
+      blocked(ev, fx, audio);
       break;
     case 'special':
       fx.bang(tint, 0.6, 0.35);
@@ -275,6 +280,13 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
         fx.burst(ev.x, ev.y, { count: 22, color: '#d8ccc3', color2: '#f7efe5', speed: 0.45, spread: 0.9, dir: Math.PI, life: 0.55, gravity: 0.15 * down });
         fx.ring(ev.x, ev.y, { color: '#f2e2cc', from: 0.02, to: 0.16, life: 0.4, width: 0.01 });
         audio?.rumble();
+      } else if (ev.k === 'wall') {
+        // GU's midline wall flashes up across the court from where GU stood.
+        // The special's own bang and sound play alongside.
+        for (const dx of [-0.14, 0, 0.14]) {
+          fx.burst(ev.x + dx, ev.y, { count: 10, color: '#9df3ff', color2: '#ffffff', speed: 0.35, spread: TAU, life: 0.45 });
+        }
+        fx.ring(ev.x, ev.y, { color: '#9df3ff', from: 0.02, to: 0.22, life: 0.45, width: 0.01 });
       } else {
         // A wall of snow blown up off the goal line, into the court, settling
         // back onto the bank.
@@ -291,6 +303,8 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
         fx.burst(ev.x, ev.y, { count: 10, color: '#f7efe5', color2: '#9a8c9c', speed: 0.45, spread: TAU, life: 0.35, gravity: 0.3 * down, size: 0.006 });
         fx.ring(ev.x, ev.y, { color: '#f2e2cc', to: 0.1, life: 0.25 });
         audio?.clack();
+      } else if (ev.k === 'wall') {
+        blocked(ev, fx, audio);
       } else {
         const bank = ev.p === 0 ? 1 : -1;
         const last = ev.left === 0;
@@ -305,6 +319,11 @@ export function reactTo(ev, fx, chars, audio, opts = {}) {
       if (ev.k === 'spire') {
         fx.burst(ev.x, ev.y, { count: 26, color: '#d8ccc3', color2: '#7d7182', speed: 0.4, spread: TAU, life: 0.6, gravity: 0.45 * down, size: 0.009 });
         audio?.crumble();
+      } else if (ev.k === 'wall') {
+        // Spent, timed out or shattered by a QUAKE: shards along its length.
+        for (const dx of [-0.12, 0, 0.12]) {
+          fx.burst(ev.x + dx, ev.y, { count: 8, color: '#9df3ff', color2: '#3da5ff', speed: 0.3, spread: TAU, life: 0.5, gravity: 0.3 * down, size: 0.006 });
+        }
       } else {
         // Melted, or the last of it after a final block: a soft slump of
         // powder onto the goal line.
