@@ -20,7 +20,9 @@ export const TAG_FULL = 'RGX';
 /** What a complete signalling code looks like, whichever encoding made it. */
 export const CODE_RE = /^RG[PX][A-Z2-7]+$/;
 
-function b32encode(bytes) {
+// The Base32 and deflate helpers are shared with league codes (data/league.js),
+// which travel through the same chat apps and paste boxes.
+export function b32encode(bytes) {
   let out = '', buf = 0, bits = 0;
   for (const b of bytes) {
     buf = (buf << 8) | b;
@@ -34,7 +36,7 @@ function b32encode(bytes) {
   return out;
 }
 
-function b32decode(str) {
+export function b32decode(str) {
   const out = [];
   let buf = 0, bits = 0;
   for (const ch of str) {
@@ -264,13 +266,13 @@ function unpackCompact(code) {
 /* ------------------------------------------------------------------ */
 /* Full-SDP fallback                                                   */
 
-async function deflate(bytes) {
+export async function deflate(bytes) {
   const cs = new CompressionStream('deflate-raw');
   const buf = await new Response(new Blob([bytes]).stream().pipeThrough(cs)).arrayBuffer();
   return new Uint8Array(buf);
 }
 
-async function inflate(bytes) {
+export async function inflate(bytes) {
   const ds = new DecompressionStream('deflate-raw');
   const buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
   return new Uint8Array(buf);

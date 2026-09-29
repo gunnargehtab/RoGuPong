@@ -7,7 +7,7 @@
 
 import { drawText, measure, GLYPH_H } from './pixelfont.js';
 import { renderLogoTo } from './logo.js';
-import { CHARACTERS, byId as charById } from '../game/characters.js';
+import { CHARACTERS, BALANCE, byId as charById } from '../game/characters.js';
 import { STAGES } from '../game/stages.js';
 import { itemById } from '../game/items.js';
 import { drawFighter } from '../game/render.js';
@@ -15,6 +15,7 @@ import { drawQrToCanvas } from '../net/qr.js';
 import { prettyCode, inviteLink, extractCode, CODE_RE } from '../net/sdp.js';
 import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
+import { findLeagueCode } from '../data/league.js';
 import { isIOS } from '../diag.js';
 
 // Two grid rows of four. Indices ride the wire ({t:'emote', i}), so only ever
@@ -100,7 +101,14 @@ export class Screens {
   }
 
   refresh() {
-    if (this.current) this.show(this.current, this.data);
+    if (this.current) this.update(this.data);
+  }
+
+  /** Draw the current screen again with new data, where the player had scrolled to. */
+  update(data) {
+    const y = this.root.scrollTop;
+    this.show(this.current, data);
+    this.root.scrollTop = y;
   }
 
   onClick(e) {
@@ -152,6 +160,25 @@ export class Screens {
     }
   }
 
+  /** The name box, saved as it is left: uppercase, ten characters at most. */
+  nameInput() {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'pname';
+    input.maxLength = 10;
+    input.placeholder = 'YOUR NAME';
+    input.value = this.profile.name;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    const commit = () => {
+      this.profile.name = input.value.trim().toUpperCase().slice(0, 10);
+      this.app.saveProfile();
+    };
+    input.addEventListener('change', commit);
+    input.addEventListener('blur', commit);
+    return input;
+  }
+
   /* ---------------------------------------------------------------- */
   /* Title                                                             */
 
@@ -187,8 +214,6 @@ export class Screens {
         <h3>Player</h3>
         <small class="muted">tap to change</small>
       </div>
-      <input type="text" id="pname" maxlength="10" placeholder="YOUR NAME"
-             value="${esc(this.profile.name)}" autocomplete="off" spellcheck="false">
       <div class="row" style="margin-top:10px">
         <button class="btn small secondary" data-action="toggle-music">Music: ${this.profile.music ? 'on' : 'off'}</button>
         <button class="btn small secondary" data-action="toggle-sfx">Sfx: ${this.profile.sfx ? 'on' : 'off'}</button>
@@ -200,6 +225,7 @@ export class Screens {
       <small class="muted" style="display:block;margin-top:6px">
         Tap to switch. Fast drops the glows, scanlines and animated scenery.
         Older phones get a much smoother game.</small>`;
+    who.insertBefore(this.nameInput(), who.querySelector('.row'));
     wrap.appendChild(who);
 
     // For a glitch that never reached the Link Lost screen: a dead sound, a
@@ -209,15 +235,6 @@ export class Screens {
     diag.dataset.action = 'copy-diag';
     diag.textContent = 'Copy diagnostics';
     wrap.appendChild(diag);
-
-    const input = who.querySelector('#pname');
-    const commit = () => {
-      const v = input.value.trim().toUpperCase().slice(0, 10);
-      this.profile.name = v;
-      this.app.saveProfile();
-    };
-    input.addEventListener('change', commit);
-    input.addEventListener('blur', commit);
 
     const credit = document.createElement('div');
     credit.className = 'credit';
@@ -284,20 +301,22 @@ export class Screens {
 
   screenBoard(data) {
     const tab = data.tab || 'standings';
+    // Packed ahead of a Share tap; free when the history hasn't changed.
+    this.app.prepareLeague();
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('LEADERBOARD', { scale: 3 }));
 
     const tabs = document.createElement('div');
     tabs.className = 'tabs';
-    tabs.innerHTML = `
-      <button data-action="board-tab" data-tab="standings" aria-selected="${tab === 'standings'}">Standings</button>
-      <button data-action="board-tab" data-tab="recent" aria-selected="${tab === 'recent'}">Recent</button>`;
+    tabs.innerHTML = [['standings', 'Standings'], ['recent', 'Recent'], ['heroes', 'Heroes']].map(([id, label]) =>
+      `<button data-action="board-tab" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`).join('');
     wrap.appendChild(tabs);
 
     const panel = document.createElement('div');
     panel.className = 'panel';
-    panel.innerHTML = tab === 'standings' ? this.standingsHtml() : this.recentHtml();
+    panel.innerHTML = tab === 'heroes' ? this.heroesHtml(data)
+      : tab === 'recent' ? this.recentHtml() : this.standingsHtml();
     wrap.appendChild(panel);
 
     const note = document.createElement('div');
@@ -305,13 +324,107 @@ export class Screens {
     note.textContent = 'Histories merge automatically when you connect';
     wrap.appendChild(note);
 
+    // For friends who can't meet up: the whole history through a chat app.
+    const n = lb.allMatches().length;
+    const leagueBox = document.createElement('div');
+    leagueBox.className = 'panel tight';
+    leagueBox.innerHTML = `
+      <div class="title-bar">
+        <h3>League</h3>
+        <small class="muted">${n} match${n === 1 ? '' : 'es'} on this phone</small>
+      </div>
+      <p style="margin-top:4px"><small>Not meeting up? Share your league through any chat app —
+        your friends import it and their tables catch up with yours.</small></p>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small secondary" data-action="share-league">Share league</button>
+        <button class="btn small secondary" data-action="import-league">Import league</button>
+      </div>`;
+    wrap.appendChild(leagueBox);
+
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = `
       <button class="btn secondary" data-action="title">Back</button>
       <button class="btn small danger" data-action="wipe">Clear</button>`;
     wrap.appendChild(row);
+
+    // The match list as a table, for a bug report or a balance discussion.
+    const out = document.createElement('div');
+    out.className = 'row';
+    out.innerHTML = `
+      <button class="textbtn" data-action="copy-history" data-names="no">Copy history</button>
+      <button class="textbtn" data-action="copy-history" data-names="yes">Copy with names</button>`;
+    wrap.appendChild(out);
     return wrap;
+  }
+
+  /**
+   * Win rates per hero, strongest first. With two friends the samples are
+   * tiny and a hero's numbers are partly its player's, so rates wait for
+   * HERO_MIN matches, a verdict waits for the numbers to be clear, and a tap
+   * splits a hero by player.
+   */
+  heroesHtml({ hero: open, allBalances }) {
+    // Once a patch has changed the roster, older matches say little about
+    // the heroes as they are now — so they are left out unless asked for.
+    const patched = lb.balancesSeen().some((b) => b !== BALANCE);
+    const current = patched && !allBalances;
+    const stats = lb.heroStats(current ? BALANCE : null);
+    const none = () => ({ played: 0, won: 0, pointsFor: 0, pointsAgainst: 0, players: new Map() });
+    const rated = (r) => (r.played >= lb.HERO_MIN ? 1 : 0);
+    const rows = CHARACTERS.map((c) => ({ ...none(), ...stats.get(c.id), c }))
+      .sort((a, b) => rated(b) - rated(a) || (rated(a) ? b.won / b.played - a.won / a.played : 0));
+
+    const filter = patched ? `
+      <div class="title-bar" style="margin-bottom:6px">
+        <small class="muted">${current ? 'Since the last balance patch' : 'Every balance version'}</small>
+        <button class="btn small secondary" style="width:auto" data-action="board-balance">
+          ${current ? 'Show all' : 'Since the patch'}</button>
+      </div>` : '';
+    if (!rows.some((r) => r.played)) {
+      return `${filter}<p class="center">No matches between two different heroes yet.</p>`;
+    }
+
+    const pct = (part, whole, played) => (played >= lb.HERO_MIN && whole ? `${Math.round(part / whole * 100)}%` : '&mdash;');
+    const cells = (r) => `
+      <td class="num">${r.won}</td>
+      <td class="num">${r.played - r.won}</td>
+      <td class="num">${pct(r.won, r.played, r.played)}</td>
+      <td class="num">${pct(r.pointsFor, r.pointsFor + r.pointsAgainst, r.played)}</td>`;
+    const VERDICT = {
+      strong: '<small class="verdict-strong">looks strong</small>',
+      weak: '<small class="verdict-weak">looks weak</small>',
+      early: '<small class="muted">too early to tell</small>',
+    };
+    const me = this.profile.name;
+    const body = rows.map((r) => {
+      const isOpen = open === r.c.id;
+      const verdict = VERDICT[lb.heroVerdict(r.won, r.played)];
+      let html = `
+        <tr class="hero" data-action="board-hero" data-hero="${esc(r.c.id)}" aria-expanded="${isOpen}">
+          <td><b style="color:${r.c.color2}">${esc(r.c.name)}</b> <small>${isOpen ? '&#9662;' : '&#9656;'}</small>
+            ${verdict ? `<br>${verdict}` : ''}</td>
+          ${cells(r)}
+        </tr>`;
+      if (isOpen) {
+        const players = [...r.players.values()].sort((a, b) => b.played - a.played || a.name.localeCompare(b.name));
+        html += players.length
+          ? players.map((p) => `
+            <tr class="split${p.name === me ? ' me' : ''}"><td>${esc(p.name)}</td>${cells(p)}</tr>`).join('')
+          : `<tr class="split"><td colspan="5"><small>Nobody has played ${esc(r.c.name)} here yet</small></td></tr>`;
+      }
+      return html;
+    }).join('');
+
+    return `${filter}<table>
+      <thead><tr>
+        <th>Hero</th><th class="num">W</th><th class="num">L</th>
+        <th class="num">Win%</th><th class="num">Pts%</th>
+      </tr></thead><tbody>${body}</tbody></table>
+      <p style="margin-top:10px"><small>Pts% is the share of points won. Mirror matches are
+        left out. Rates show from ${lb.HERO_MIN} matches, and a hero is only called strong or
+        weak once the numbers are clear. Between the same friends a hero's record is partly
+        its player's &mdash; tap a hero to split it by player.</small></p>`;
   }
 
   standingsHtml() {
@@ -362,6 +475,19 @@ export class Screens {
     const wrap = document.createElement('div');
     wrap.className = 'screen';
     wrap.appendChild(pixelLabel('TWO PLAYERS', { scale: 3 }));
+
+    // Before connecting is the moment to fix a missing name: in the lobby it
+    // already takes leaving and reconnecting.
+    if (lb.isStandInName(this.profile.name)) {
+      const who = document.createElement('div');
+      who.className = 'panel tight notice';
+      who.innerHTML = `
+        <h3 class="warn">Who&rsquo;s playing?</h3>
+        <p style="margin:4px 0 8px">Type your name, so the leaderboard can tell you apart.
+        Without one you share a stand-in with every nameless player.</p>`;
+      who.appendChild(this.nameInput());
+      wrap.appendChild(who);
+    }
 
     const panel = document.createElement('div');
     panel.className = 'panel';
@@ -524,21 +650,22 @@ export class Screens {
   /**
    * The box a code gets pasted into. A paste is the submit: a complete code is
    * unmistakable, so there is nothing to confirm. The clipboard button saves
-   * even the long-press when the browser allows reading it.
+   * even the long-press when the browser allows reading it. Handshake codes
+   * unless `found` says what else to look for.
    */
-  pasteArea(action) {
+  pasteArea(action, { found = (text) => CODE_RE.test(extractCode(text)), placeholder = 'RGP…' } = {}) {
     const box = document.createElement('div');
     box.style.display = 'flex';
     box.style.flexDirection = 'column';
     box.style.gap = '8px';
     const ta = document.createElement('textarea');
     ta.id = 'paste-input';
-    ta.placeholder = 'RGP…';
+    ta.placeholder = placeholder;
     ta.autocapitalize = 'characters';
     ta.spellcheck = false;
     ta.addEventListener('input', (e) => {
       if (e.inputType !== 'insertFromPaste') return;
-      if (CODE_RE.test(extractCode(ta.value))) this.app.handleAction(action);
+      if (found(ta.value)) this.app.handleAction(action);
     });
     box.appendChild(ta);
     if (navigator.clipboard?.readText) {
@@ -617,6 +744,30 @@ export class Screens {
     return wrap;
   }
 
+  /** Import league: a history a friend shared, merged into this phone's. */
+  screenLeague() {
+    const wrap = document.createElement('div');
+    wrap.className = 'screen';
+    wrap.appendChild(pixelLabel('IMPORT LEAGUE', { scale: 2 }));
+
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML = `<p>Paste the league a friend shared &mdash; the whole message is fine.
+      Its matches join your leaderboard. Nothing on this phone is replaced or removed.</p>`;
+    wrap.appendChild(panel);
+    wrap.appendChild(this.pasteArea('use-league', { found: (text) => !!findLeagueCode(text), placeholder: 'RGL…' }));
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.flexDirection = 'column';
+    actions.style.gap = '10px';
+    actions.innerHTML = `
+      <button class="btn" data-action="use-league">Import</button>
+      <button class="btn secondary" data-action="board">Back</button>`;
+    wrap.appendChild(actions);
+    return wrap;
+  }
+
   /* ---------------------------------------------------------------- */
   /* Lobby                                                             */
 
@@ -661,6 +812,31 @@ export class Screens {
           <p style="margin-top:4px">${who} has a newer version. You can still play, but
           the newest crates stay off. Once this phone has internet, reload RoGuPong to
           update it, then reconnect.</p>`;
+      wrap.appendChild(notice);
+    }
+
+    // The leaderboard knows players only by name, so two phones with the same
+    // one — or a stand-in every nameless player shares — merge into one row.
+    const myName = this.profile.name;
+    const nameIssues = [];
+    if (lb.isStandInName(myName)) {
+      nameIssues.push('<b>You have no name yet</b>, so your matches are saved under a stand-in '
+        + 'that every nameless player shares.');
+    }
+    if (theirName && lb.isStandInName(theirName)) {
+      nameIssues.push(`<b>Your friend has no name yet</b>, so their matches go under
+        ${esc(theirName)}, a stand-in that every nameless player shares.`);
+    } else if (theirName && theirName === myName) {
+      nameIssues.push(`<b>You&rsquo;re both called ${esc(myName)}</b>, so the leaderboard will
+        count you as one player.`);
+    }
+    if (nameIssues.length) {
+      const notice = document.createElement('div');
+      notice.className = 'panel tight notice';
+      notice.innerHTML = `<h3 class="warn">Check your names</h3>
+        ${nameIssues.map((t) => `<p style="margin-top:4px">${t}</p>`).join('')}
+        <p style="margin-top:4px"><small>Names are set on the title screen. To fix one
+        now, leave, change it and reconnect.</small></p>`;
       wrap.appendChild(notice);
     }
 

@@ -98,6 +98,11 @@ so an aggressive rallying player charges in about five exchanges and a passive
 one still gets there eventually. A full meter is announced by the button
 lighting up and pulsing — no reading a number mid-rally.
 
+**Balance version.** The numbers above are balance version 1 (`BALANCE` in
+`characters.js`). Every match record carries the version it was played at, so
+any change here — or to how a special plays out — bumps it, and the Heroes
+tab can then show win rates since the patch (§8).
+
 ---
 
 ## 4. Items and pressure
@@ -194,7 +199,8 @@ court is the whole point. Everything else — physics, speeds,
 paddles, specials — is untouched, so party mode is the same game played in a
 hailstorm. It rides the `setup` and `start` messages like every other match
 parameter, and the leaderboard deliberately does not distinguish the two modes:
-one family table beats two half-empty ones.
+one family table beats two half-empty ones. (Each record does note its mode,
+for the balance data in §8.)
 
 **Rally pressure.** Past twenty returns two things start happening: the speed
 ceiling creeps up (to about 2.4 court-heights/s) and both paddles shrink,
@@ -427,13 +433,66 @@ no internet.
 
 Each phone keeps its own list of finished matches in `localStorage`. Records
 are immutable and carry a random id, so when two phones connect they simply
-send each other their recent history and take the **union** — no conflicts, no
+send each other their history and take the **union** — no conflicts, no
 clocks to reconcile, and both friends end up looking at exactly the same table.
-Standings, win rates, point differential, longest rally and head-to-head are
-all derived from that list at render time.
+Standings, win rates, point differential, longest rally, head-to-head and the
+hero stats are all derived from that list at render time.
 
-The practical effect is that the leaderboard survives even if one phone is
-wiped, as long as the other one has played those matches too.
+**A pass-along league.** A phone sends *everything* it holds, not just its
+owner's matches, so a group of friends who mix partners converges on one
+league: Anna plays Ben, Ben plays Carlo, and Carlo's phone now knows how Anna
+did. The newest 80 matches ride in `hello`, which is all a build from before
+full exchange reads. The rest follows in `hist` chunks of 40, fed to the
+reliable channel only as fast as it drains, so a lobby message sent meanwhile
+never queues behind a whole history. The receiver gathers the chunks and
+merges once at the end — one storage write and one toast — or, if the link
+drops mid-stream, merges whatever made it across. Each phone keeps up to 3,000
+matches (about 600 KB), the oldest falling off first; a match that arrives
+only to be trimmed again isn't announced as news. The practical effect is
+that the leaderboard survives a wiped phone as long as anyone in the group has
+played those matches too.
+
+**Share league / Import league** covers friends who don't meet up. Share packs
+the history into a *league code* — names, heroes and stages pooled into
+tables, times stored as gaps, deflated, then Base32 like the handshake codes,
+with the prefix `RGL` — and hands it to any chat app inside a one-line
+explanation. The random match ids dominate what is left, at about 30
+characters a match, so a code kept under 60,000 characters (one WhatsApp
+message) carries about two thousand matches; a longer history shares its
+newest and says so. Import finds the code in whatever is pasted, the whole
+message included, and merges it exactly like a connect does: nothing is
+replaced or removed. The code is packed as the leaderboard opens rather than
+on the tap, because the share sheet only opens inside the tap's user gesture
+and some browsers let that lapse across the await that deflating takes.
+
+**Hero stats.** The Heroes tab shows each hero's wins, losses, win rate and
+share of points won, strongest first. Mirror matches are left out — they say
+nothing about which hero is stronger. Between two friends the samples are
+tiny and a hero's record is partly its player's, so the tab is deliberately
+cautious. A rate only shows from 5 matches, with "—" before that. A hero is
+only called *looks strong* or *looks weak* from 10 matches, and only once the
+95% Wilson interval around its win rate clears 50%: 8–4 is still "too early to
+tell", 15–5 is not. Tapping a hero splits its record by player, which tells a
+strong hero from a strong player who always picks it.
+
+Every record carries the host's `balance` version (`BALANCE` in
+`characters.js`, bumped with any tuning change; records from before the field
+count as version 1). Once a patch has landed, the tab shows only matches since
+it, with a toggle for all. Records also note whether the match was a party
+match, for the balance data below.
+
+**Getting the data out.** Copy history, at the foot of the leaderboard, puts
+the matches on the clipboard as compact CSV — about 60 bytes a match — for
+pasting into an issue during balance work. Names become P1, P2… in order of
+first appearance unless Copy with names is used, because issues are public.
+
+**Names.** A typed name is the whole identity (§10), so a missing name, or two
+friends with the same one, quietly merges different people into one row. A
+player with no name — or one of the stand-ins the game uses for nameless
+players, YOU, FRIEND, HOST and GUEST — is asked for one on the connect screen,
+where fixing it costs nothing. In the lobby, where it would take leaving and
+reconnecting, both phones warn when either player is nameless or both share a
+name.
 
 **Flair.** Cosmetic unlocks ride the same records. Four looks — RAINBOW (reach
 a 20-hit rally), FLAME (win ten matches), STARLIGHT (play all four stages),
@@ -446,6 +505,11 @@ phone renders your look; in play it colours your paddle's trim and the trail
 of any ball you touched last, so a rally visibly trades ownership. There is no
 anti-cheat — a guest claims whatever flair it likes and the host draws it,
 because the threat model is two kids on a sofa.
+
+**Known limits, accepted.** The same threat model covers the league: a faked
+record spreads to everyone just as a real one does. And Clear only empties
+this phone — the next connect or import brings back whatever friends still
+hold.
 
 ---
 
@@ -462,6 +526,8 @@ because the threat model is two kids on a sofa.
 | The other phone goes silent | The heartbeat gives up after 8 s with nothing heard and shows the Link Lost screen |
 | A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
 | Any drop | Link Lost says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
+| A match history too long for one message | Streamed after `hello` in paced chunks; a drop mid-stream keeps what arrived |
+| A league code too long for a chat message | It carries the newest matches that fit, and says so |
 | A snapshot arrives late | Discarded by tick number |
 | The radio backs up mid-match | Superseded state packets are dropped at the source, not queued |
 | The special press is dropped | It cannot be — it travels on the reliable channel |
@@ -541,4 +607,5 @@ compositor — a real slice of touch-to-paddle latency on Android.
   milliseconds; prediction of one paddle covers it, and rollback would have
   added a large amount of machinery for something nobody would feel.
 - **No account system.** A name typed on the title screen is the whole
-  identity, and that is enough for a leaderboard between friends.
+  identity, and that is enough for a leaderboard between friends — with a
+  nudge when a name is missing or taken (§8).

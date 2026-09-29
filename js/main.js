@@ -11,13 +11,14 @@ import { Input } from './game/input.js';
 import { Fx, reactTo } from './game/fx.js';
 import { audio } from './game/audio.js';
 import { Match } from './game/match.js';
-import { byId as charById } from './game/characters.js';
+import { byId as charById, BALANCE } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
 import { itemById } from './game/items.js';
 import { Peer } from './net/peer.js';
 import { extractCode, inviteLink, CODE_RE } from './net/sdp.js';
 import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
+import * as league from './data/league.js';
 import { log, logLines, clock, device, isIOS } from './diag.js';
 
 const SNAPSHOT_HZ = 30;
@@ -27,7 +28,11 @@ const INPUT_HZ = 30;
 // it just gets fewer pictures of it.
 const FIXED_STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 6;
-const HISTORY_SHARED = 80;      // how many past matches to hand the other phone
+// The newest matches ride in 'hello', which is all a build from before full
+// history exchange reads; the rest follows in 'hist' chunks small enough for
+// any browser's data channel.
+const HISTORY_SHARED = 80;
+const HISTORY_CHUNK = 40;
 // What this build speaks, sent in 'hello'. Bump it whenever a change needs both
 // phones on the same build to look right — snapshot fields a guest has to draw,
 // crates it has to know — and tag new crates with it (items.js `since`). Builds
@@ -82,6 +87,9 @@ class App {
     this.stage = STAGES[0];
     this.target = 7;
     this.party = false;
+    this.balance = BALANCE;       // the host's, for the match being played
+    this.histIn = null;           // their history while it streams in after 'hello'
+    this.league = null;           // a league code made ahead of the Share tap
     this.myChar = this.profile.char;
     this.theirChar = 'gu';
     this.theirFlair = 'none';
@@ -501,11 +509,13 @@ class App {
   /* ------------------------------------------------------------------ */
   /* Match lifecycle                                                     */
 
-  startMatch({ seed, stage, target, chars, mid, party }) {
+  startMatch({ seed, stage, target, chars, mid, party, balance }) {
     this.stage = stageById(stage);
     this.target = target;
     this.party = !!party;
     this.matchId = mid;
+    // A host from before balance versions sends none, and runs version 1.
+    this.balance = Number.isInteger(balance) && balance > 0 ? balance : 1;
     // The stage deals its own crates: its pool, minus anything newer than the
     // older phone's build. Only the host's copy is ever rolled, so the pool
     // never has to travel.
@@ -548,6 +558,8 @@ class App {
       bestRally: m.bestRally,
       stage: this.stage.id,
       target: this.target,
+      party: this.party,
+      balance: this.balance,
     };
   }
 
@@ -662,15 +674,28 @@ class App {
       audio.blip(880, 0.1);
       this.screens.toast('Connected', 'good');
       this.theirProtocol = null;
+      this.histIn = null;
+      const history = lb.allMatches();
+      const older = history.slice(0, Math.max(0, history.length - HISTORY_SHARED));
       peer.send({
         t: 'hello',
         v: PROTOCOL,
         name: this.profile.name || (peer.isHost ? 'HOST' : 'GUEST'),
         char: this.myChar,
         flair: this.profile.flair,
-        matches: lb.allMatches().slice(-HISTORY_SHARED),
+        matches: history.slice(-HISTORY_SHARED),
+        more: older.length,
       });
       if (peer.isHost) peer.send(this.setupMsg());
+      // The rest of the history, matches between other friends included, so
+      // a group that mixes partners converges on one league. A build from
+      // before this ignores 'hist' and makes do with the hello's share.
+      const chunks = [];
+      for (let i = 0; i < older.length; i += HISTORY_CHUNK) {
+        const m = older.slice(i, i + HISTORY_CHUNK);
+        chunks.push({ t: 'hist', m, end: i + HISTORY_CHUNK >= older.length });
+      }
+      peer.sendPaced(chunks);
       // Opened behind a chat app, while the reply was still being shared.
       if (document.hidden) peer.send({ t: 'away', v: true });
       this.openLobby();
@@ -743,7 +768,24 @@ class App {
   }
 
   refreshLobby() {
-    if (this.screens.current === 'lobby') this.screens.show('lobby', this.lobbyData());
+    if (this.screens.current === 'lobby') this.screens.update(this.lobbyData());
+  }
+
+  /** Merge the history that streamed in: all of it, or after a drop whatever made it across. */
+  finishHistory() {
+    const h = this.histIn;
+    if (!h) return;
+    this.histIn = null;
+    this.reportMerge(h.added + lb.mergeMatches(h.recs), h.received + h.recs.length);
+  }
+
+  reportMerge(added, received) {
+    log(`history: ${received} received, ${added} new`);
+    if (!added) return;
+    this.screens.toast(`Merged ${added} match${added === 1 ? '' : 'es'}`, 'good');
+    // New matches can unlock flair, and change every table on the board.
+    if (this.screens.current === 'board') this.screens.refresh();
+    else this.refreshLobby();
   }
 
   onMessage(msg) {
@@ -754,7 +796,12 @@ class App {
         this.theirFlair = lb.flairById(msg.flair).id;
         this.theirProtocol = Number.isInteger(msg.v) && msg.v > 0 ? msg.v : 1;
         const added = lb.mergeMatches(msg.matches);
-        if (added) this.screens.toast(`Merged ${added} match${added === 1 ? '' : 'es'}`, 'good');
+        const received = Array.isArray(msg.matches) ? msg.matches.length : 0;
+        // More to come: gather it all and merge once, so thousands of matches
+        // cost one storage write and one toast rather than dozens.
+        const more = Math.min(Math.floor(Number(msg.more)) || 0, 10000);
+        if (more > 0) this.histIn = { added, received, recs: [], expect: more };
+        else this.reportMerge(added, received);
         // A build from before the protocol can't notice a mismatch at all, so
         // whichever phone can names the one that needs updating — itself
         // included.
@@ -766,6 +813,12 @@ class App {
         this.refreshLobby();
         break;
       }
+      case 'hist':
+        if (!this.histIn || !Array.isArray(msg.m)) break;
+        // Never hold more than was announced, whatever the other end sends.
+        this.histIn.recs.push(...msg.m.slice(0, this.histIn.expect - this.histIn.recs.length));
+        if (msg.end) this.finishHistory();
+        break;
       case 'setup':
         if (!this.peer.isHost) {
           this.stage = stageById(msg.stage);
@@ -840,6 +893,7 @@ class App {
     const drop = this.describeDrop(reason);
     this.lastDrop = drop;
     log(`drop: ${reason} · ${drop.facts.map(([k, v]) => `${k.toLowerCase()}: ${v}`).join(' · ')}`);
+    this.finishHistory();
     this.stopScanner();
     audio.stopMusic();
     audio.playMusic('menu');
@@ -1044,16 +1098,111 @@ class App {
   }
 
   async pasteFromClipboard(next) {
+    let text;
     try {
-      const code = extractCode(await navigator.clipboard.readText());
-      if (!CODE_RE.test(code)) {
-        this.screens.toast('No RoGuPong code in the clipboard', 'bad');
-        return;
-      }
-      if (next === 'use-answer') this.acceptAnswer(code);
-      else this.beginJoin(code);
+      text = await navigator.clipboard.readText();
     } catch {
       this.screens.toast('Clipboard unavailable — long-press the box and paste', 'bad');
+      return;
+    }
+    if (next === 'use-league') {
+      this.importLeague(text);
+      return;
+    }
+    const code = extractCode(text);
+    if (!CODE_RE.test(code)) {
+      this.screens.toast('No RoGuPong code in the clipboard', 'bad');
+      return;
+    }
+    if (next === 'use-answer') this.acceptAnswer(code);
+    else this.beginJoin(code);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* History in and out by hand                                          */
+
+  /**
+   * Make the league code before anyone taps Share — the board asks for it
+   * each time it is drawn. The share sheet only opens inside the tap's user
+   * gesture, which some browsers let lapse across the await deflating takes.
+   */
+  prepareLeague() {
+    const rev = lb.historyRevision();
+    if (this.league?.rev === rev) return;
+    const pending = { rev, made: null };
+    this.league = pending;
+    league.leagueCode()
+      .then((made) => { pending.made = made; })
+      .catch((err) => log(`league code failed: ${err.message}`));
+  }
+
+  async shareLeague() {
+    const made = this.league?.rev === lb.historyRevision() ? this.league.made : null;
+    if (!made) {
+      this.prepareLeague();
+      this.screens.toast('Packing the league — tap again in a moment');
+      return;
+    }
+    if (!made.count) {
+      this.screens.toast('No matches to share yet', 'bad');
+      return;
+    }
+    if (made.count < made.total) {
+      this.screens.toast(`Only the newest ${made.count} matches fit in one message`, 'warn');
+    }
+    const text = league.leagueMessage(made);
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;      // the share sheet was closed
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      this.screens.toast('League copied — send it to your friends', 'good');
+    } catch {
+      this.screens.revealText(text);
+      this.screens.toast('Selected — long-press to copy');
+    }
+  }
+
+  async importLeague(text) {
+    const code = league.findLeagueCode(text);
+    if (!code) {
+      this.screens.toast('No league code in there', 'bad');
+      return;
+    }
+    let recs;
+    try {
+      recs = await league.readLeague(code);
+    } catch (err) {
+      this.screens.toast(`Can't read that league: ${err.message}`, 'bad');
+      return;
+    }
+    const added = lb.mergeMatches(recs);
+    log(`league import: ${recs.length} in the code, ${added} new`);
+    this.screens.toast(added
+      ? `Added ${added} match${added === 1 ? '' : 'es'}`
+      : `Nothing new — you already had all ${recs.length}`, added ? 'good' : '');
+    this.go('board', { tab: 'standings' });
+  }
+
+  /** The history as CSV for a bug report or balance discussion; names hidden unless asked. */
+  async copyHistory(names) {
+    const n = lb.allMatches().length;
+    if (!n) {
+      this.screens.toast('No matches yet', 'bad');
+      return;
+    }
+    const text = league.historyCsv({ names });
+    try {
+      await navigator.clipboard.writeText(text);
+      this.screens.toast(`${n} match${n === 1 ? '' : 'es'} copied${names ? '' : ' — names hidden'}`, 'good');
+    } catch {
+      this.screens.revealText(text);
+      this.screens.toast('Selected — long-press to copy');
     }
   }
 
@@ -1081,13 +1230,34 @@ class App {
       case 'howto': this.go('howto'); break;
       case 'board': this.go('board', { tab: 'standings' }); break;
       case 'board-tab': this.go('board', { tab: data.tab }); break;
+      // Unfolding a hero or widening the balance filter stays on the same
+      // board, so it skips go() and its log line.
+      case 'board-hero': {
+        const d = this.screens.data;
+        this.screens.update({ ...d, hero: d.hero === data.hero ? null : data.hero });
+        break;
+      }
+      case 'board-balance': {
+        const d = this.screens.data;
+        this.screens.update({ ...d, allBalances: !d.allBalances });
+        break;
+      }
       case 'wipe':
-        if (confirm('Erase all match history on this phone?')) {
+        if (confirm('Erase all match history on this phone? Friends who hold these matches '
+          + 'will pass them back the next time you connect.')) {
           lb.clearHistory();
           this.screens.refresh();
           this.screens.toast('History cleared');
         }
         break;
+      case 'copy-history': this.copyHistory(data.names === 'yes'); break;
+      case 'share-league': this.shareLeague(); break;
+      case 'import-league': this.go('league'); break;
+      case 'use-league': {
+        const v = document.getElementById('paste-input')?.value;
+        if (v?.trim()) this.importLeague(v);
+        break;
+      }
       case 'toggle-music':
         this.profile.music = !this.profile.music;
         audio.setMusic(this.profile.music);
@@ -1218,12 +1388,14 @@ class App {
       party: this.party,
       chars: [this.myChar, this.theirChar],
       mid: lb.newMatchId(),
+      balance: BALANCE,
     };
     this.peer.send(setup);
     this.startMatch(setup);
   }
 
   leave(notify) {
+    this.finishHistory();
     this.stopScanner();
     if (this.peer) {
       if (notify) this.peer.send({ t: 'bye' });
