@@ -5,6 +5,12 @@
 // fast paddles are small, and every special trades a full meter for a
 // different kind of advantage.
 
+// The roster's balance version, saved in every match record so the Heroes
+// tab can show win rates "since the last patch". Bump it with any change that
+// could shift who wins: a hero's numbers here, or how a special plays out in
+// match.js. The host's number is the one recorded — its build runs the match.
+export const BALANCE = 1;
+
 export const CHARACTERS = [
   {
     id: 'ro',

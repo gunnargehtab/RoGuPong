@@ -34,6 +34,7 @@ const ASSETS = [
   'js/game/scenes/brera.js',
   'js/game/scenes/alpi.js',
   'js/data/leaderboard.js',
+  'js/data/league.js',
 ];
 
 self.addEventListener('install', (event) => {

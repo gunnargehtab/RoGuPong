@@ -3,7 +3,8 @@
 // Direct WebRTC, no game server anywhere: the two handsets talk straight to
 // each other across the WiFi. Two data channels ride the same connection:
 //
-//   'ctl'    reliable + ordered — menus, character picks, scores, emotes
+//   'ctl'    reliable + ordered — menus, character picks, scores, emotes,
+//            the match history
 //   'state'  unreliable + unordered — 30 Hz simulation snapshots and inputs,
 //            where a late packet is worth less than the next one
 
@@ -23,6 +24,10 @@ const GATHER_SETTLE_MS = 400;
 // source — about five snapshots, past which the radio is stalling and every
 // queued packet is stale by the time it leaves.
 const STATE_BACKLOG_MAX = 4096;
+// How much of a paced run may wait in the reliable channel at once: a few
+// history chunks, so a message sent meanwhile queues behind milliseconds of
+// data rather than the whole run.
+const PACED_BACKLOG = 32768;
 const HEARTBEAT_MS = 1500;
 // This long without a word from the other phone and it is given up on.
 const SILENCE_MS = 8000;
@@ -253,6 +258,27 @@ export class Peer {
 
   /** Reliable, ordered. Menus, picks, results — anything that must arrive. */
   send(msg) { return this.raw(this.ctl, msg); }
+
+  /**
+   * Reliable and ordered too, but fed to the channel only as fast as it
+   * drains: a long run of messages (the whole match history) would otherwise
+   * sit in one queue ahead of every lobby message and heartbeat sent after it.
+   */
+  sendPaced(msgs) {
+    const ch = this.ctl;
+    if (!ch) return;
+    let i = 0;
+    ch.bufferedAmountLowThreshold = PACED_BACKLOG;
+    const pump = () => {
+      while (i < msgs.length && !this.closed && ch.readyState === 'open' && ch.bufferedAmount <= PACED_BACKLOG) {
+        this.raw(ch, msgs[i++]);
+      }
+      if (i < msgs.length && !this.closed && ch.readyState === 'open') {
+        ch.addEventListener('bufferedamountlow', pump, { once: true });
+      }
+    };
+    pump();
+  }
 
   /** The radio can't keep up with the state stream right now. */
   stateBackedUp() {

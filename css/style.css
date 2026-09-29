@@ -251,6 +251,13 @@ tr.me td { color: var(--cyan); }
 .medal-2 { color: #d8d8e8; }
 .medal-3 { color: #e09a5a; }
 
+/* Heroes tab: a hero row unfolds into one row per player. */
+tr.hero { cursor: pointer; }
+tr.split td { padding-top: 4px; padding-bottom: 4px; padding-left: 14px; font-size: 0.68rem; border-bottom-color: #22163f; }
+tr.split td.num { padding-left: 5px; }
+.verdict-strong { color: var(--green); }
+.verdict-weak { color: var(--red); }
+
 .tabs { display: flex; gap: 6px; }
 .tabs button {
   flex: 1; padding: 9px 4px; font-family: var(--font); font-size: 0.66rem;

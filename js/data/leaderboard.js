@@ -4,30 +4,54 @@
 // every match it played and the two handsets merge their histories whenever
 // they connect. Match records are immutable and carry a unique id, so merging
 // is just a union — no conflicts, no clock to argue about, and both friends
-// end up looking at exactly the same table.
+// end up looking at exactly the same table. Every phone passes on everything
+// it holds, matches between other friends included, so a group that mixes
+// partners converges on one league.
 
 const KEY = 'rogupong.matches.v1';
 const PROFILE_KEY = 'rogupong.profile.v1';
-const MAX_RECORDS = 400;
+// About 600 KB of storage at the cap: years of evenings for a group of
+// friends, and far inside what any browser allows a page.
+const MAX_RECORDS = 3000;
+
+// What the game calls a player who never typed a name. Every nameless player
+// shares them, so the leaderboard can't tell those players apart.
+const STAND_INS = ['YOU', 'FRIEND', 'HOST', 'GUEST'];
+export const isStandInName = (name) => !name || STAND_INS.includes(name);
+
+// The parsed history, kept in memory: at a few thousand records it is too big
+// to parse again every time a screen asks for standings or flair. Another tab
+// writing the same storage throws it away ('storage' only fires in the others).
+let cache = null;
+let revision = 0;
+window.addEventListener('storage', (e) => {
+  if (e.key === KEY || e.key === null) { cache = null; revision++; }
+});
 
 function read() {
+  if (cache) return cache;
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    cache = Array.isArray(list) ? list : [];
   } catch {
-    return [];
+    cache = [];
   }
+  return cache;
 }
 
 function write(list) {
+  cache = list.length > MAX_RECORDS ? list.slice(-MAX_RECORDS) : list;
+  revision++;
   try {
-    const trimmed = list.slice(-MAX_RECORDS);
-    localStorage.setItem(KEY, JSON.stringify(trimmed));
+    localStorage.setItem(KEY, JSON.stringify(cache));
   } catch {
     /* private mode, or a full quota — the game still plays */
   }
 }
+
+/** Changes whenever the history does, so a copy made from it can tell it is stale. */
+export const historyRevision = () => revision;
 
 /**
  * Cosmetic flair, earned by playing. Unlocks are COMPUTED from the match
@@ -122,24 +146,46 @@ export function recordMatch(rec) {
   return rec;
 }
 
-/** Union of local history with a peer's, keeping ours authoritative on ties. */
+const isScore = (v) => Number.isInteger(v) && v >= 0 && v < 1000;
+
+/**
+ * Whether a record from elsewhere — another phone, a pasted league code — has
+ * everything the tables read. A broken one would break them for everybody it
+ * is passed on to.
+ */
+function sane(rec) {
+  return !!rec && typeof rec.id === 'string' && rec.id.length > 0 && rec.id.length <= 32
+    && Array.isArray(rec.players) && rec.players.length === 2
+    && rec.players.every((p) => typeof p?.name === 'string' && p.name.length > 0 && p.name.length <= 16
+      && typeof p.char === 'string')
+    && Array.isArray(rec.score) && rec.score.length === 2 && rec.score.every(isScore)
+    && (rec.winner === 0 || rec.winner === 1);
+}
+
+/**
+ * Union of local history with records from elsewhere, keeping ours
+ * authoritative on ties. Returns how many new matches it kept.
+ */
 export function mergeMatches(incoming) {
   if (!Array.isArray(incoming)) return 0;
   const list = read();
   const seen = new Set(list.map(matchId));
-  let added = 0;
+  const fresh = [];
   for (const rec of incoming) {
-    if (!rec || typeof rec.id !== 'string' || seen.has(rec.id)) continue;
-    if (!Array.isArray(rec.players) || rec.players.length !== 2) continue;
+    if (!sane(rec) || seen.has(rec.id)) continue;
     seen.add(rec.id);
     list.push(rec);
-    added++;
+    fresh.push(rec.id);
   }
-  if (added) {
-    list.sort((a, b) => (a.at || 0) - (b.at || 0));
-    write(list);
-  }
-  return added;
+  if (!fresh.length) return 0;
+  list.sort((a, b) => (a.at || 0) - (b.at || 0));
+  write(list);
+  if (list.length <= MAX_RECORDS) return fresh.length;
+  // Past the cap the oldest fall off again, and a match that came in only to
+  // be trimmed is no news — otherwise a full phone would announce the same
+  // old matches on every connect.
+  const kept = new Set(read().map(matchId));
+  return fresh.filter((id) => kept.has(id)).length;
 }
 
 /** Aggregate standings, one row per player name. */
@@ -202,6 +248,69 @@ export function headToHead(nameA, nameB) {
     else if (winner === nameB) b++;
   }
   return { a, b, total: a + b };
+}
+
+// A hero's rates show from this many matches; below it they are noise.
+export const HERO_MIN = 5;
+// And it is only called strong or weak from this many, when the numbers agree.
+const VERDICT_MIN = 10;
+
+const tally = () => ({ played: 0, won: 0, pointsFor: 0, pointsAgainst: 0 });
+
+function addResult(row, won, pf, pa) {
+  row.played++;
+  if (won) row.won++;
+  row.pointsFor += pf;
+  row.pointsAgainst += pa;
+}
+
+/** The balance version a record was played at. Records from before the field are version 1. */
+export const balanceOf = (rec) => rec.balance || 1;
+
+/** Every balance version the history holds, oldest first. */
+export function balancesSeen() {
+  return [...new Set(read().map(balanceOf))].sort((a, b) => a - b);
+}
+
+/**
+ * Results per hero, keyed by hero id, each with the same split by player —
+ * between two friends a hero's record is also the record of whoever keeps
+ * picking it. Mirror matches say nothing about which hero is stronger and are
+ * left out. `balance` limits it to matches played at that balance version.
+ */
+export function heroStats(balance = null) {
+  const heroes = new Map();
+  for (const rec of read()) {
+    if (balance != null && balanceOf(rec) !== balance) continue;
+    const [a, b] = rec.players;
+    if (!a?.char || !b?.char || a.char === b.char) continue;
+    rec.players.forEach((p, i) => {
+      if (!heroes.has(p.char)) heroes.set(p.char, { id: p.char, ...tally(), players: new Map() });
+      const hero = heroes.get(p.char);
+      if (!hero.players.has(p.name)) hero.players.set(p.name, { name: p.name, ...tally() });
+      const won = rec.winner === i;
+      addResult(hero, won, rec.score[i], rec.score[1 - i]);
+      addResult(hero.players.get(p.name), won, rec.score[i], rec.score[1 - i]);
+    });
+  }
+  return heroes;
+}
+
+/**
+ * 'strong', 'weak', 'early' (too early to tell) or null (too few to say even
+ * that). A hero is only called strong or weak once the 95% Wilson interval
+ * around its win rate clears 50% — so 8–4 is still too early, 15–5 is not.
+ */
+export function heroVerdict(won, played) {
+  if (played < HERO_MIN) return null;
+  if (played < VERDICT_MIN) return 'early';
+  const z2 = 1.96 * 1.96;
+  const p = won / played;
+  const centre = (p + z2 / (2 * played)) / (1 + z2 / played);
+  const spread = Math.sqrt(z2 * (p * (1 - p) / played + z2 / (4 * played * played))) / (1 + z2 / played);
+  if (centre - spread > 0.5) return 'strong';
+  if (centre + spread < 0.5) return 'weak';
+  return 'early';
 }
 
 export function clearHistory() {

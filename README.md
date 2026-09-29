@@ -81,7 +81,8 @@ moment it lands in the box.
 > joining direction. An iPhone can still host, it just has to take the reply
 > code by paste rather than by scanning. The Camera app opens invites in
 > Safari, not in a copy of the game added to the home screen, and the two keep
-> separate names and histories.
+> separate names and histories (Share league and Import league move a history
+> from one to the other).
 
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
@@ -144,9 +145,16 @@ Palazzo di Brera in soft daylight; **Alpi Sunset** — the Dolomites on fire
 over a long slope of snow.
 
 **A leaderboard** with no server behind it. Each phone stores its own match
-history; when two phones connect they swap histories and take the union, so
-both friends end up looking at the same table — standings, win rate, point
-difference, longest rally and head-to-head.
+history; when two phones connect they swap their whole histories and take the
+union, so both friends end up looking at the same table — standings, win rate,
+point difference, longest rally and head-to-head. Phones pass on every match
+they hold, not just their own, so a group of friends who mix partners ends up
+with one league. Friends who don't meet can **Share league** through any chat
+app and **Import league** on the other end. The **Heroes** tab shows each
+hero's win rate and share of points, and a tap splits a hero by player; with
+small samples it says "too early to tell" rather than guess. **Copy history**
+copies the matches as a CSV table, names hidden, for a bug report or a balance
+discussion.
 
 ---
 
@@ -179,7 +187,8 @@ js/
     stages.js         the four courts and the crates each one deals
     scenes/           each stage painted in pixel art — backdrop and court floor
   data/
-    leaderboard.js    local history and peer merging
+    leaderboard.js    local history, peer merging, standings and hero stats
+    league.js         league codes and the history CSV
 ```
 
 ---
