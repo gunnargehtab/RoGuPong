@@ -10,8 +10,9 @@ import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, ballRadius
 import { itemById } from './items.js';
 
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
-const HUD_TOP = 0.105;          // fraction of canvas height
-const HUD_BOTTOM = 0.155;
+const HUD_TOP = 0.08;           // fraction of the safe height
+const HUD_BOTTOM = 0.09;
+const BLINK_HZ = 3;             // a full meter's blink, on the paddle and the HUD
 
 /* ------------------------------------------------------------------ */
 /* Fighter sprites — 11x12, hand-placed                                */
@@ -75,6 +76,36 @@ function readSafeArea() {
   };
   probe.remove();
   return safe;
+}
+
+/* HUD block sizes, by the scale of the pixel font's name line. */
+const subScale = (s) => Math.max(1, s - 1);
+const meterHeight = (s) => Math.max(5, Math.round(s * 2.2));
+const streakScale = (s) => Math.max(1, Math.round(s / 3));
+
+/** The on half of a full meter's blink. */
+const blinkOn = (time) => Math.floor(time * BLINK_HZ * 2) % 2 === 0;
+
+const litCache = new Map();
+/**
+ * A hero's colour, lit up: mixed halfway to white. A charged paddle flashes
+ * this rather than the hero's second colour, which for RO and BRIO is close
+ * to the gold that the grow ring and the royal flair already mean.
+ */
+function lit(hex) {
+  let c = litCache.get(hex);
+  if (!c) {
+    const n = parseInt(hex.slice(1), 16);
+    c = '#' + [n >> 16, (n >> 8) & 255, n & 255]
+      .map((v) => Math.round(v + (255 - v) * 0.5).toString(16).padStart(2, '0')).join('');
+    litCache.set(hex, c);
+  }
+  return c;
+}
+
+/** Height of a player's name, hero and meter stacked at name scale `s`. */
+function hudStack(s) {
+  return 8 * s + 8 * subScale(s) + 3 + meterHeight(s);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -265,7 +296,7 @@ export class Renderer {
     this.W = 0;
     this.H = 0;
     this.safe = { top: 0, right: 0, bottom: 0, left: 0 };
-    this.specialRect = null;
+    this.myPaddle = null;         // your paddle as last drawn, for the tap test
     this.resize();
   }
 
@@ -320,7 +351,7 @@ export class Renderer {
 
   layout() {
     // Court and HUD share the safe area. A notch, Dynamic Island or home
-    // indicator gets backdrop only — never a name, a score or the button.
+    // indicator gets backdrop only — never a name or a score.
     const s = this.safe;
     const pad = Math.round(this.W * 0.025);
     const safeH = this.H - s.top - s.bottom;
@@ -341,18 +372,40 @@ export class Renderer {
       w: Math.round(cw),
       h: Math.round(ch),
     };
-    const stripH = this.H - s.bottom - (this.court.y + this.court.h);
-    const bw = Math.min(this.W * 0.32, 160);
-    const bh = Math.min(stripH * 0.52, 62);
-    this.specialRect = {
-      x: right - bw,
-      y: this.court.y + this.court.h + (stripH - bh) / 2,
-      w: bw,
-      h: bh,
-    };
-    this.hudLeft = left;
     this.hudRight = right;
     this.unit = this.court.w;      // one "court width" in screen pixels
+    this.hud = this.hudLayout();
+  }
+
+  /**
+   * Type sizes for the HUD, from the strips above and below the court and the
+   * court's own width — never the screen's. Sized by width, a tablet or a
+   * desktop window drew names many times too big, stretched the rival's meter
+   * across the court and pushed your own meter off the bottom of the screen.
+   * Both strips share the name size, so the two players' HUDs match.
+   */
+  hudLayout() {
+    const c = this.court;
+    const topH = c.y - this.safe.top;
+    const botH = this.H - this.safe.bottom - (c.y + c.h);
+    const room = (h) => h - 2 * Math.max(3, Math.round(h * 0.07));
+    // A nine-letter name takes at most about half the court's width.
+    const widest = Math.max(1, Math.floor(c.w / 110));
+    const fit = (limit, height, space) => {
+      let s = 1;
+      while (s < limit && height(s + 1) <= space) s++;
+      return s;
+    };
+    const name = fit(Math.min(5, widest), hudStack, room(Math.min(topH, botH)));
+    // Scores leave room for a streak marker beneath, and two digits stay
+    // under a third of the court's width.
+    const scoreCap = Math.min(12, Math.max(2, Math.floor(c.w / 36)));
+    const scoreBlock = (s) => 7 * s + 1 + 7 * streakScale(s);
+    return {
+      topH, botH, name,
+      topScore: Math.max(2, fit(scoreCap, scoreBlock, room(topH))),
+      botScore: Math.max(2, fit(scoreCap, scoreBlock, room(botH))),
+    };
   }
 
   /* ---------------------------------------------------------------- */
@@ -367,7 +420,7 @@ export class Renderer {
     const {
       view = 0, stage, fx, time = 0, names = ['P1', 'P2'], chars,
       flairs = ['none', 'none'],
-      localPaddleX = null, rtt = 0, showTouchHint = false,
+      localPaddleX = null, rtt = 0, showTouchHint = false, showTapHint = false,
     } = opts;
     const ctx = this.ctx;
     const flip = view === 1;
@@ -389,6 +442,7 @@ export class Renderer {
     this.drawBanners(m, flip, chars, view, time);
     this.drawHud(m, chars, names, view, time, rtt);
     if (showTouchHint) this.drawTouchHint(time);
+    if (showTapHint) this.drawTapHint(time);
     this.drawOverlay(fx);
   }
 
@@ -842,10 +896,17 @@ export class Renderer {
       const px = (i === view && localPaddleX != null ? localPaddleX : p.x);
       const [sx, sy] = this.pt(px, PADDLE_Y[i], flip);
       const ch = chars[i];
+      if (i === view) this.myPaddle = { x: sx, w };
 
+      // The special lives on the paddle: a full meter blinks the whole paddle
+      // in the hero's colour, lit up, right where the player is looking.
+      const charge = Math.max(0, Math.min(1, m.meter[i] || 0));
+      const ready = charge >= 1;
+      const on = ready && blinkOn(time);
       ctx.save();
-      this.glow(ch.color, p.pending ? 26 : 12);
-      ctx.fillStyle = p.frost > 0 ? '#9df3ff' : ch.color;
+      if (ready) this.glow(lit(ch.color), 22);
+      else this.glow(ch.color, p.pending ? 26 : 12);
+      ctx.fillStyle = on ? lit(ch.color) : p.frost > 0 ? '#9df3ff' : ch.color;
       roundRect(ctx, sx - w / 2, sy - h / 2, w, h, h * 0.45);
       ctx.fill();
       ctx.restore();
@@ -853,8 +914,7 @@ export class Renderer {
       // bevel
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillRect(sx - w / 2 + h * 0.3, sy - h / 2 + 1, w - h * 0.6, Math.max(1, h * 0.22));
-      ctx.fillStyle = ch.color2;
-      ctx.fillRect(sx - w * 0.12, sy - h * 0.12, w * 0.24, h * 0.24);
+      this.drawCharge(sx, sy, w, h, charge, ch, on);
 
       // Flair — the earned paddle skin. The court side is where the decoration
       // goes, and the local player always sits at the bottom of the screen.
@@ -865,7 +925,7 @@ export class Renderer {
         const seg = w / 6;
         for (let k = 0; k < 6; k++) {
           ctx.fillStyle = `hsl(${(k * 60 + Math.round(time * 120)) % 360} 90% 62%)`;
-          ctx.fillRect(sx - w / 2 + k * seg, sy + h * 0.14, Math.ceil(seg), Math.max(1, h * 0.2));
+          ctx.fillRect(sx - w / 2 + k * seg, sy + h * 0.2, Math.ceil(seg), Math.max(1, h * 0.2));
         }
       } else if (flair === 'flame') {
         for (let k = 0; k < 4; k++) {
@@ -931,6 +991,7 @@ export class Renderer {
         // this paddle bend. Blinks through its last second.
         this.drawArcade(sx, courtY, w, h, outward);
       }
+      if (ready) this.drawReadyPips(sx, courtY, w, h, outward, ch, time);
 
       if (p.shield > 0) {
         const [, shy] = this.pt(0.5, SHIELD_Y[i], flip);
@@ -946,6 +1007,40 @@ export class Renderer {
         for (let k = 0; k < 14; k++) ctx.fillRect(c.x + (k + 0.5) * (c.w / 14) - 2, shy - 2, 4, 4);
       }
     }
+  }
+
+  /**
+   * The meter, inside the paddle: a strip that fills left to right as the
+   * special charges and flashes white with the paddle's blink once it is full.
+   * Flat fills, so fast graphics shows exactly the same thing.
+   */
+  drawCharge(sx, sy, w, h, charge, ch, on) {
+    const ctx = this.ctx;
+    const th = Math.max(2, Math.round(h * 0.32));
+    const tw = Math.max(4, Math.round(w - h));          // clear of the rounded ends
+    const x0 = Math.round(sx - tw / 2);
+    const y0 = Math.round(sy - th / 2);
+    ctx.fillStyle = 'rgba(11,6,22,0.62)';
+    ctx.fillRect(x0, y0, tw, th);
+    if (charge <= 0) return;
+    ctx.fillStyle = on ? '#ffffff' : ch.color2;
+    ctx.fillRect(x0, y0, Math.max(1, Math.round(tw * charge)), th);
+  }
+
+  /** A charged paddle sheds pips toward the rival, so the blink is never missed. */
+  drawReadyPips(sx, courtY, w, h, outward, ch, time) {
+    const ctx = this.ctx;
+    const u = Math.max(2, Math.round(h * 0.22));
+    const rise = h * 2.6;
+    ctx.fillStyle = lit(ch.color);
+    for (let k = 0; k < 3; k++) {
+      const f = (time * 1.4 + k / 3) % 1;
+      ctx.globalAlpha = 1 - f;
+      const x = Math.round(sx + (k - 1) * w * 0.32 - u / 2);
+      const y = Math.round(courtY + outward * (2 + f * rise) - (outward < 0 ? u : 0));
+      ctx.fillRect(x, y, u, u);
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** ARCO's badge: three stone arches standing on the paddle's court side. */
@@ -1011,100 +1106,66 @@ export class Renderer {
   /* HUD and banners                                                   */
 
   drawHud(m, chars, names, view, time, rtt) {
-    const ctx = this.ctx;
     const c = this.court;
+    const hud = this.hud;
     const foe = 1 - view;
-    const left = this.hudLeft;
-    const right = this.hudRight;
-
-    const nameScale = Math.max(2, Math.round(this.W / 130));
-    const subScale = Math.max(1, nameScale - 1);
+    // Kept within the court's width, whatever the screen around it.
+    const left = c.x;
+    const right = c.x + c.w;
+    const stack = hudStack(hud.name);
+    const streak = m.streak || [0, 0];
+    // Room for the widest score this match can reach, so a name never shifts
+    // when the score beside it grows a digit.
+    const digits = '0'.repeat(String(m.target || 7).length);
 
     /* ---- opponent, in the strip above the court (below any notch) ---- */
     const top0 = this.safe.top;
-    const topH = c.y - top0;
-    const topScore = Math.max(3, Math.min(10, Math.floor((topH * 0.55) / 7)));
-    const topScoreW = measure(String(m.scores[foe]), topScore);
-
-    drawText(ctx, names[foe].slice(0, 9), left, top0 + topH * 0.10, {
-      scale: nameScale, color: chars[foe].color2, shadow: '#0b0616',
-    });
-    drawText(ctx, chars[foe].name, left, top0 + topH * 0.10 + nameScale * 9, {
-      scale: subScale, color: 'rgba(255,255,255,0.55)',
-    });
-    drawText(ctx, String(m.scores[foe]), right, top0 + topH / 2, {
-      scale: topScore, color: '#ffffff', outline: '#1a0d2b',
-      align: 'right', baseline: 'middle',
-    });
-    const streak = m.streak || [0, 0];
-    if (streak[foe] >= 3) {
-      drawText(ctx, 'X' + streak[foe], right, top0 + topH / 2 + topScore * 4.5, {
-        scale: Math.max(1, Math.round(topScore / 3)), color: '#ff9b4a',
-        align: 'right', baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
-      });
-    }
-    const topMeterW = Math.max(60, right - left - topScoreW - 18);
-    this.meterBar(left, top0 + topH * 0.10 + nameScale * 9 + subScale * 9 + 3,
-      topMeterW, Math.max(6, nameScale * 2), m.meter[foe], chars[foe], time, false);
+    const topScoreW = measure(digits, hud.topScore);
+    this.drawScore(m.scores[foe], streak[foe], right, top0, hud.topH, hud.topScore, 'right', time);
+    this.drawPlayer(names[foe], chars[foe], left, top0 + (hud.topH - stack) / 2,
+      right - topScoreW - 12 - left, hud.name, m.meter[foe], time);
 
     /* ---- you, in the strip below the court (above any home indicator) ---- */
     const botY = c.y + c.h;
-    const botH = this.H - this.safe.bottom - botY;
-    const btn = this.specialRect;
-    const botScore = Math.max(4, Math.min(12, Math.floor((botH * 0.52) / 7)));
-    const scoreW = measure(String(m.scores[view]), botScore);
-
-    drawText(ctx, String(m.scores[view]), left, botY + botH * 0.46, {
-      scale: botScore, color: '#ffffff', outline: '#1a0d2b', baseline: 'middle',
-    });
-    if (streak[view] >= 3) {
-      drawText(ctx, 'X' + streak[view], left, botY + botH * 0.46 + botScore * 4.5, {
-        scale: Math.max(1, Math.round(botScore / 3)), color: '#ff9b4a',
-        baseline: 'middle', alpha: 0.65 + Math.sin(time * 7) * 0.35,
-      });
-    }
-
-    const textX = left + scoreW + 14;
-    drawText(ctx, names[view].slice(0, 9), textX, botY + botH * 0.16, {
-      scale: nameScale, color: chars[view].color2, shadow: '#0b0616',
-    });
-    drawText(ctx, chars[view].name, textX, botY + botH * 0.16 + nameScale * 9, {
-      scale: subScale, color: 'rgba(255,255,255,0.55)',
-    });
-    const meterW = Math.max(50, btn.x - textX - 14);
-    this.meterBar(textX, botY + botH * 0.16 + nameScale * 9 + subScale * 9 + 4,
-      meterW, Math.max(7, nameScale * 2.4), m.meter[view], chars[view], time, false);
-
-    /* ---- special button ---- */
-    const ready = m.meter[view] >= 1;
-    ctx.save();
-    ctx.globalAlpha = ready ? 1 : 0.45;
-    if (ready) this.glow(chars[view].color2, 18 + Math.sin(time * 8) * 8);
-    ctx.fillStyle = ready ? chars[view].color : 'rgba(255,255,255,0.10)';
-    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, btn.h * 0.32);
-    ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = ready ? '#ffffff' : 'rgba(255,255,255,0.28)';
-    ctx.lineWidth = 2;
-    roundRect(ctx, btn.x, btn.y, btn.w, btn.h, btn.h * 0.32);
-    ctx.stroke();
-
-    const label = ready ? chars[view].special.name : 'CHARGING';
-    let labelScale = Math.max(1, Math.floor((btn.w - 16) / (label.length * 6)));
-    drawText(ctx, label, btn.x + btn.w / 2, btn.y + btn.h / 2, {
-      scale: labelScale,
-      color: ready ? '#ffffff' : 'rgba(255,255,255,0.5)',
-      align: 'center', baseline: 'middle', shadow: ready ? '#1a0d2b' : null,
-    });
+    const textX = left + measure(digits, hud.botScore) + 12;
+    this.drawScore(m.scores[view], streak[view], left, botY, hud.botH, hud.botScore, 'left', time);
+    this.drawPlayer(names[view], chars[view], textX, botY + (hud.botH - stack) / 2,
+      right - textX, hud.name, m.meter[view], time);
 
     if (rtt) {
-      drawText(ctx, rtt + 'MS', right, this.H - this.safe.bottom - 4, {
+      drawText(this.ctx, rtt + 'MS', this.hudRight, this.H - this.safe.bottom - 3, {
         scale: 1, color: 'rgba(255,255,255,0.25)', align: 'right', baseline: 'bottom',
       });
     }
   }
 
-  meterBar(x, y, w, h, value, char, time, big) {
+  /** A score in the middle of its strip, a streak's pulsing ×N beneath it. */
+  drawScore(score, streak, x, y0, h, scale, align, time) {
+    const ss = streakScale(scale);
+    const top = y0 + (h - (7 * scale + 1 + 7 * ss)) / 2;
+    drawText(this.ctx, String(score), x, top, {
+      scale, color: '#ffffff', outline: '#1a0d2b', align,
+    });
+    if (streak >= 3) {
+      drawText(this.ctx, 'X' + streak, x, top + 7 * scale + 1, {
+        scale: ss, color: '#ff9b4a', align, alpha: 0.65 + Math.sin(time * 7) * 0.35,
+      });
+    }
+  }
+
+  /** A player's name, hero and meter, stacked down from (x, y), `w` wide. */
+  drawPlayer(name, char, x, y, w, s, meter, time) {
+    const sub = subScale(s);
+    drawText(this.ctx, name.slice(0, 9), x, y, {
+      scale: s, color: char.color2, shadow: '#0b0616',
+    });
+    drawText(this.ctx, char.name, x, y + 8 * s + 1, {
+      scale: sub, color: 'rgba(255,255,255,0.55)',
+    });
+    this.meterBar(x, y + 8 * s + 8 * sub + 3, Math.max(40, w), meterHeight(s), meter, char, time);
+  }
+
+  meterBar(x, y, w, h, value, char, time) {
     const ctx = this.ctx;
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     roundRect(ctx, x, y, w, h, h / 2);
@@ -1121,15 +1182,11 @@ export class Renderer {
     roundRect(ctx, x, y, Math.max(2, w * value), h, h / 2);
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    // A full meter's rim blinks with the paddle, on either graphics setting.
+    ctx.strokeStyle = full && blinkOn(time) ? '#ffffff' : 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1;
     roundRect(ctx, x, y, w, h, h / 2);
     ctx.stroke();
-    if (full && big) {
-      drawText(ctx, 'READY', x + w + 6, y + h / 2, {
-        scale: 1, color: char.color2, baseline: 'middle',
-      });
-    }
   }
 
   drawBanners(m, flip, chars, view, time) {
@@ -1189,6 +1246,24 @@ export class Renderer {
     drawText(this.ctx, 'SLIDE TO MOVE', c.x + c.w / 2, c.y + c.h * 0.78, {
       scale: Math.max(1, c.w / 130), color: '#ffffff', align: 'center',
       baseline: 'middle', alpha: a, outline: '#1a0d2b',
+    });
+  }
+
+  /**
+   * The first time your meter fills: where the special lives now. Stands over
+   * your paddle, kept inside the court, until you have fired one.
+   */
+  drawTapHint(time) {
+    const c = this.court;
+    const p = this.myPaddle;
+    if (!p) return;
+    const text = 'TAP PADDLE';
+    const scale = Math.max(1, Math.round(c.w / 130));
+    const half = measure(text, scale) / 2 + 4;
+    const x = Math.max(c.x + half, Math.min(c.x + c.w - half, p.x));
+    drawText(this.ctx, text, x, c.y + c.h * 0.78, {
+      scale, color: '#ffffff', align: 'center', baseline: 'middle',
+      alpha: 0.7 + Math.sin(time * 6) * 0.3, outline: '#1a0d2b',
     });
   }
 
@@ -1276,9 +1351,15 @@ export class Renderer {
     this.drawOverlay(fx || { flash: null });
   }
 
-  hitSpecial(x, y) {
-    const b = this.specialRect;
-    return b && x >= b.x - 12 && x <= b.x + b.w + 12 && y >= b.y - 12 && y <= b.y + b.h + 12;
+  /**
+   * Is screen x in your paddle's column, as last drawn? Anywhere above or
+   * below it counts, with a little slack either side for a fingertip.
+   */
+  inPaddleColumn(x) {
+    const p = this.myPaddle;
+    if (!p) return false;
+    const slack = Math.max(12, this.court.w * 0.03);
+    return Math.abs(x - p.x) <= p.w / 2 + slack;
   }
 }
 

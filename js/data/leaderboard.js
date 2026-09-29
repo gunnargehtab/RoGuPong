@@ -114,10 +114,13 @@ export function loadProfile() {
       // and the watcher takes a fresh look.
       quality: p?.quality === 'low' && p?.qualityChosen ? 'low' : 'high',
       qualityChosen: !!p?.qualityChosen,
+      // Has fired a special by tapping the paddle (or a key): no more hint.
+      tapLearned: !!p?.tapLearned,
     };
   } catch {
     return {
       name: '', char: 'ro', flair: 'none', music: true, sfx: true, quality: 'high', qualityChosen: false,
+      tapLearned: false,
     };
   }
 }
