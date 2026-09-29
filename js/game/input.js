@@ -1,12 +1,18 @@
 // RoGuPong — thumbs.
 //
 // Slide anywhere on the screen and the paddle follows your finger's x
-// position; the button in the corner fires your special. Multi-touch is
-// handled properly, so holding the paddle with one thumb and mashing the
-// special with the other works the way you'd expect it to.
+// position; a quick tap on your own paddle fires your special. Control is
+// absolute, so tapping where the paddle already is barely moves it — which is
+// what makes the paddle itself a safe place to put the trigger. Multi-touch is
+// handled properly: the newest finger steers, and when it lifts, the one still
+// holding the screen takes the paddle back.
 //
-// Arrow keys and space are wired up too, purely so the game can be developed
-// on a laptop.
+// Arrow keys move and Space or Shift fire, so the game can be played on a
+// laptop too.
+
+// A tap is short and still: anything longer or further is a drag.
+const TAP_MS = 200;
+const TAP_SLOP = 10;            // CSS pixels
 
 export class Input {
   constructor(canvas, renderer) {
@@ -16,6 +22,8 @@ export class Input {
     this.special = false;
     this.touched = false;
     this.paddlePointer = null;
+    this.pointers = new Map();  // pointerId -> last x, oldest first
+    this.tap = null;            // a press on the paddle that may yet be a tap
     this.rect = null;
     this.keys = new Set();
     this.bind();
@@ -40,14 +48,14 @@ export class Input {
   }
 
   onDown(e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
     this.rect = this.canvas.getBoundingClientRect();
     const [x, y] = this.local(e);
-    if (this.renderer.hitSpecial(x, y)) {
-      this.special = true;
-      if (navigator.vibrate) navigator.vibrate(18);
-      return;
-    }
-    e.preventDefault();
+    // Judged against the paddle as drawn before this press moves it.
+    this.tap = this.renderer.inPaddleColumn(x) ? { id: e.pointerId, x, y, at: e.timeStamp } : null;
+    this.pointers.delete(e.pointerId);
+    this.pointers.set(e.pointerId, x);
     this.paddlePointer = e.pointerId;
     this.touched = true;
     this.setFromX(x);
@@ -55,14 +63,33 @@ export class Input {
   }
 
   onMove(e) {
-    if (e.pointerId !== this.paddlePointer) return;
+    if (!this.pointers.has(e.pointerId)) return;
     e.preventDefault();
-    const [x] = this.local(e);
-    this.setFromX(x);
+    const [x, y] = this.local(e);
+    this.pointers.set(e.pointerId, x);
+    if (this.tap?.id === e.pointerId && Math.hypot(x - this.tap.x, y - this.tap.y) > TAP_SLOP) {
+      this.tap = null;
+    }
+    if (e.pointerId === this.paddlePointer) this.setFromX(x);
   }
 
   onUp(e) {
-    if (e.pointerId === this.paddlePointer) this.paddlePointer = null;
+    if (!this.pointers.has(e.pointerId)) return;
+    this.pointers.delete(e.pointerId);
+    const tap = this.tap;
+    if (tap?.id === e.pointerId) {
+      this.tap = null;
+      const [x, y] = this.local(e);
+      if (e.type === 'pointerup' && e.timeStamp - tap.at <= TAP_MS
+        && Math.hypot(x - tap.x, y - tap.y) <= TAP_SLOP) {
+        this.special = true;
+      }
+    }
+    if (e.pointerId !== this.paddlePointer) return;
+    // A thumb still on the screen takes the paddle back.
+    const held = [...this.pointers].pop();
+    this.paddlePointer = held ? held[0] : null;
+    if (held) this.setFromX(held[1]);
   }
 
   setFromX(px) {
@@ -100,6 +127,8 @@ export class Input {
     this.special = false;
     this.touched = false;
     this.paddlePointer = null;
+    this.pointers.clear();
+    this.tap = null;
     this.rect = null;
   }
 }

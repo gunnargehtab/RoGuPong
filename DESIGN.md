@@ -39,9 +39,22 @@ devices.
 The court is drawn at a fixed 0.56 width-to-height ratio on both phones and
 letterboxed into whatever screen it finds, so a match between a small phone and
 a big one is played on identical geometry. The space left over above and below
-becomes the HUD. Court and HUD share the screen's *safe area*: a notch, a
-Dynamic Island or a home indicator only ever covers backdrop, never a name, a
-score or the special button. Phones without them lay out exactly as before.
+becomes the HUD: a strip of 8% of the height above the court for the rival and
+9% below it for you. With no special button to house (§3), that is about 12%
+more court on a 16:9 phone than the old layout gave; a taller phone runs out of
+width first. Court and HUD share the screen's *safe area*: a notch, a Dynamic
+Island or a home indicator only ever covers backdrop, never a name or a score.
+
+The HUD is sized by those strips and by the court's width, never by the
+screen's width, and stays within the court's edges. Sized by the screen, a
+tablet or a desktop window drew names six to eleven times too big, ran the
+rival's meter across the court and pushed your own meter off the bottom of
+the screen. Now each strip holds the biggest name, hero and meter stack that
+fits it, with the name size shared by both strips and capped so a nine-letter
+name takes at most half the court. A 16:9 phone gives up a step of text size
+for its bigger court, a tall phone keeps its sizes, a tablet gets them a
+little bigger, and a landscape window — letterboxed, with stage art filling
+the sides — still fits everything, just small.
 
 | Quantity | Value | Why |
 | --- | --- | --- |
@@ -83,7 +96,7 @@ are small, and every special costs a full meter.
 The specials are deliberately of two kinds. AFTERBURN, CURVE and PHANTOM are
 *armed* — they wait for your next hit, so using them well means choosing which
 rally to spend them on. AEGIS and QUAKE are *immediate* — they change the
-board the moment you press the button. MAGNET sits between the two: it arms
+board the moment you fire them. MAGNET sits between the two: it arms
 the paddle, but the payoff is interactive — the caught ball rides the paddle
 for a second and the drag is the aim: however far you haul it from where it
 was caught sets the launch angle, so dragging across the court slings a sharp
@@ -95,8 +108,31 @@ answer to a MAG who camps.
 
 **The meter** fills at 0.17 per return you make plus a slow trickle of 0.022/s,
 so an aggressive rallying player charges in about five exchanges and a passive
-one still gets there eventually. A full meter is announced by the button
-lighting up and pulsing — no reading a number mid-rally.
+one still gets there eventually.
+
+**The meter lives on the paddle**, because that is where the player is already
+looking. A strip inside each paddle fills left to right with the charge; once
+it is full the whole paddle blinks three times a second in the hero's colour
+lit halfway to white — never gold, which already means the grow ring and the
+royal flair — and sheds little pips toward the rival. Both paddles show it, so
+you can see the rival's QUAKE coming too. It is all flat fills and works the
+same on fast graphics; full graphics adds a glow. The meters in the HUD stay
+as a second readout, their rim blinking in step.
+
+**Tap your paddle to fire.** Control is absolute — the paddle goes where your
+finger is — so tapping the paddle where it already stands barely moves it,
+which makes the paddle itself the one place a trigger costs nothing. A press
+anywhere in your paddle's column (a fingertip's slack either side, above or
+below it) fires the special on release if it lifted within 200 ms and moved
+less than 10 px; anything longer or further is an ordinary drag, so grabbing
+the paddle mid-rally never fires it by accident. A second finger can tap while
+a thumb holds the screen, and the thumb takes the paddle straight back. A
+mouse click works the same, and Space or Shift fire on a keyboard. MAGNET's
+drag-to-aim is untouched: by the time a ball is caught the meter is already
+spent. The special button this replaced cost the bottom strip its height;
+removing it is what gave the court its extra 12% (§2). The first time your
+meter fills, TAP PADDLE stands over your paddle until you have fired once;
+the profile remembers, so it is taught once per phone.
 
 **Balance version.** The numbers above are balance version 1 (`BALANCE` in
 `characters.js`). Every match record carries the version it was played at, so
@@ -286,7 +322,7 @@ against it until it's reloaded — conservative, but never a court one phone
 can't draw.)
 
 Anything that must not be lost — character picks, the match start, the final
-result, emotes, the special-move button press — goes on a second, **reliable
+result, emotes, the guest's special press — goes on a second, **reliable
 and ordered** channel. Both channels ride one peer connection.
 
 ---

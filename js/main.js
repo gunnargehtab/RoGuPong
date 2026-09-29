@@ -424,6 +424,11 @@ class App {
       reactTo(ev, this.fx, m.chars, audio, { accent: this.stage.accent, view: this.view });
       if (ev.t === 'goal' && !ev.quiet && navigator.vibrate) navigator.vibrate(ev.p === this.view ? 30 : [12, 40, 12]);
       if (ev.t === 'special' && navigator.vibrate) navigator.vibrate(45);
+      if (ev.t === 'special' && ev.p === this.view && !this.profile.tapLearned) {
+        // Fired one: the TAP PADDLE hint has done its job for good.
+        this.profile.tapLearned = true;
+        this.saveProfile();
+      }
     }
     this.countdownBeeps(m);
     this.fx.update(dt);
@@ -439,6 +444,7 @@ class App {
       localPaddleX: this.predictX,
       rtt: this.peer ? this.peer.rtt : 0,
       showTouchHint: !this.input.touched && m.phase === 'countdown',
+      showTapHint: !this.profile.tapLearned && m.phase === 'play' && m.meter[this.view] >= 1,
     });
 
     if (m.phase === 'over' && !this.finishing) this.finishMatch();

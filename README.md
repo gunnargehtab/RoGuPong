@@ -100,8 +100,9 @@ moment it lands in the box.
 
 Slide your thumb anywhere on the screen and your paddle follows it. **Where the
 ball hits the paddle sets the angle** — middle sends it straight back, the edges
-send it wide — and moving as you connect adds spin. The button in the corner
-fires your special once the meter is full.
+send it wide — and moving as you connect adds spin. A strip inside your paddle
+fills as your special charges; once the paddle blinks, **tap it** to fire. On a
+keyboard, arrows move and Space or Shift fires.
 
 You are always the paddle at the bottom of your own screen.
 

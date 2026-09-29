@@ -275,8 +275,10 @@ export class Screens {
       <p>Slide your thumb anywhere to move your paddle. Where the ball hits the paddle
       decides the angle: middle sends it straight, edges send it wide. Moving as you
       connect adds spin.</p>
-      <h3 style="margin-top:12px">The meter</h3>
-      <p>Every return charges your special. Fill it and the button lights up.</p>
+      <h3 style="margin-top:12px">Your special</h3>
+      <p>Every return charges your special: watch the strip inside your paddle fill.
+      When the paddle blinks it is ready — <b>tap your paddle</b> to fire it. On a
+      keyboard, Space does it.</p>
       <ul style="margin:6px 0 0;padding-left:16px">${chars}</ul>
       <h3 style="margin-top:12px">Crates</h3>
       <p>Hit one with the ball and the pickup is yours. Every stage deals its
