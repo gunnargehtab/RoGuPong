@@ -6,13 +6,16 @@
 // that matter: the page hiding and coming back, the link changing state, audio
 // and wake-lock interruptions. The Copy diagnostics button hands it over with a
 // description of the phone, ready to paste into a bug report. Nothing leaves
-// the phone any other way.
+// the phone any other way, bar that one-line description, which goes to the
+// friend's phone so its report can say what was on the other end.
 //
 // The log lives in sessionStorage, so it survives the reload iOS does when it
 // has thrown a tab away in the background — often the very moment worth seeing.
 
 const KEY = 'rogupong.diag.v1';
-const MAX_ENTRIES = 60;
+// Enough for an evening's session — the handshake, a string of matches and
+// whatever went wrong after them — without each write growing heavy.
+const MAX_ENTRIES = 100;
 
 let entries = load();
 
@@ -64,6 +67,27 @@ export function inAppBrowser() {
   if (/FBAN|FBAV|Instagram|Snapchat|musical_ly|Line\//.test(ua)) return true;
   if (isIOS()) return !navigator.standalone && !/Safari\//.test(ua);
   return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+/**
+ * Log any other copy of the game open in this browser. iOS opens an invite
+ * read by the Camera app in Safari, possibly as a new tab beside one already
+ * running the game: two copies, each wanting the wake lock, the camera and the
+ * sound. A home-screen app keeps a storage of its own, so it never hears a
+ * Safari tab, nor the other way round.
+ */
+export function watchOtherCopies() {
+  if (typeof BroadcastChannel !== 'function') return;
+  const ch = new BroadcastChannel('rogupong.copies');
+  ch.onmessage = (e) => {
+    if (e.data === 'opened') {
+      log('another copy of the game opened in this browser');
+      ch.postMessage('here');
+    } else if (e.data === 'here') {
+      log('another copy of the game is already open in this browser');
+    }
+  };
+  ch.postMessage('opened');
 }
 
 /** Home-screen app, installed app, a chat app's built-in browser, or a plain browser tab. */
