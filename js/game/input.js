@@ -26,6 +26,11 @@ export class Input {
     this.tap = null;            // a press on the paddle that may yet be a tap
     this.rect = null;
     this.keys = new Set();
+    // The last touch, for the diagnostics. A swipe on the home indicator takes
+    // an iPhone out of the match, and would show as a touch that began at the
+    // bottom edge and was cancelled as iOS took it over. Updated in place: a
+    // drag moves at the display's rate.
+    this.last = { from: 0, end: '', at: 0 };
     this.bind();
   }
 
@@ -52,6 +57,7 @@ export class Input {
     e.preventDefault();
     this.rect = this.canvas.getBoundingClientRect();
     const [x, y] = this.local(e);
+    this.note('down', this.rect.height - y);
     // Judged against the paddle as drawn before this press moves it.
     this.tap = this.renderer.inPaddleColumn(x) ? { id: e.pointerId, x, y, at: e.timeStamp } : null;
     this.pointers.delete(e.pointerId);
@@ -65,6 +71,7 @@ export class Input {
   onMove(e) {
     if (!this.pointers.has(e.pointerId)) return;
     e.preventDefault();
+    this.note('moved');
     const [x, y] = this.local(e);
     this.pointers.set(e.pointerId, x);
     if (this.tap?.id === e.pointerId && Math.hypot(x - this.tap.x, y - this.tap.y) > TAP_SLOP) {
@@ -76,6 +83,7 @@ export class Input {
   onUp(e) {
     if (!this.pointers.has(e.pointerId)) return;
     this.pointers.delete(e.pointerId);
+    this.note(e.type === 'pointercancel' ? 'cancelled' : 'lifted');
     const tap = this.tap;
     if (tap?.id === e.pointerId) {
       this.tap = null;
@@ -90,6 +98,21 @@ export class Input {
     const held = [...this.pointers].pop();
     this.paddlePointer = held ? held[0] : null;
     if (held) this.setFromX(held[1]);
+  }
+
+  note(end, from = this.last.from) {
+    const t = this.last;
+    t.from = from;
+    t.end = end;
+    t.at = performance.now();
+  }
+
+  /** The last touch in words, e.g. "last touch began 4 px above the bottom edge, cancelled 0.1 s before". */
+  touchNote(now = performance.now()) {
+    const t = this.last;
+    if (!t.at || now - t.at > 3000) return 'no touch in the last 3 s';
+    return `last touch began ${Math.round(t.from)} px above the bottom edge, `
+      + `${t.end} ${((now - t.at) / 1000).toFixed(1)} s before`;
   }
 
   setFromX(px) {

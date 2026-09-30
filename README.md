@@ -110,7 +110,8 @@ moment it lands in the box.
 > whether either phone had left the screen. If your friend left on purpose,
 > Link Lost offers **Reconnect** instead. **Copy diagnostics** (on those
 > screens, and at the foot of the title screen) copies the details of the
-> phone and what just happened, ready to paste into an issue. A brief WiFi
+> phone, which phone your friend had, and what just happened, ready to paste
+> into an issue. A brief WiFi
 > hiccup doesn't end the session: the game waits at least ten seconds for the
 > link to come back.
 

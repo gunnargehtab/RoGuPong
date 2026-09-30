@@ -1017,10 +1017,20 @@ problem from a paused phone. It comes from the same `away` messages. Builds
 from before them never send them, so nothing but the pause and the diagnostics
 depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
 the title screen, copies that with a description of the phone (browser,
-home-screen app, a chat app's own browser or a tab, safe area, graphics and
-frame rate, audio and wake-lock state) and a log of the last 60 moments that
-matter: the page hiding and coming back, link and ICE states, drops, audio and
-wake-lock interruptions, storage refused or full, a share that failed, errors.
+home-screen app, a chat app's own browser or a tab, safe area, zoom, graphics
+and frame rate, audio and wake-lock state), the friend's phone in a line (it
+rides in `hello`), and a log of the last 100 moments that matter: the page
+hiding and coming back, link and ICE states, drops, audio and wake-lock
+interruptions, storage refused or full, a share or clipboard read that failed,
+errors. Some of these moments are there for the iPhone questions that only a
+real device can settle. How each code arrived (a link, the in-game scanner, the
+paste box, the clipboard) shows which ways iPhones actually use. Whether an
+invite link loaded a fresh page or reached one already running, and any other
+copy of the game open in the same browser, show where iOS sends a Camera-app
+invite. A page hidden mid-match logs where the last touch began and how it
+ended: a swipe on the home indicator would begin at the bottom edge and be
+cancelled as iOS takes it over. A pinch zoom is logged, since iOS allows one
+whatever the viewport asks.
 The log lives in `sessionStorage`, so it survives the reload iOS does after
 throwing a background tab away. No player names go in it, nor in the report's
 account of the last drop, because reports get pasted into public issues. From

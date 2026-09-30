@@ -20,7 +20,7 @@ import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
-import { log, logLines, clock, device, isIOS, inAppBrowser } from './diag.js';
+import { log, logLines, clock, device, isIOS, inAppBrowser, watchOtherCopies } from './diag.js';
 
 const SNAPSHOT_HZ = 30;
 const INPUT_HZ = 30;
@@ -202,6 +202,7 @@ class App {
     this.theirFlair = 'none';
     this.theirName = '';
     this.theirProtocol = null;    // from their 'hello'; null until it arrives
+    this.theirDevice = null;      // their phone in a line, from their 'hello', for the diagnostics
     this.theirReady = false;
     this.myReady = false;
     this.myRematch = false;
@@ -274,7 +275,7 @@ class App {
     this.requestSync(4000);
     this.go('title');
     requestAnimationFrame((t) => this.frame(t));
-    this.consumeInviteLink();
+    this.consumeInviteLink(true);
   }
 
   /** The moments worth having in the log when something goes wrong later. */
@@ -292,6 +293,18 @@ class App {
     document.addEventListener('freeze', () => log('page frozen'));
     document.addEventListener('resume', () => log('page resumed'));
     window.addEventListener('pagehide', (e) => log(`page hide${e.persisted ? ' (kept in memory)' : ''}`));
+    // iOS lets a page be pinch-zoomed whatever its viewport asks, and a zoomed
+    // page puts buttons out of reach and the court off centre.
+    const vv = window.visualViewport;
+    if (vv) {
+      let zoomed = false;
+      vv.addEventListener('resize', () => {
+        if ((vv.scale > 1.01) === zoomed) return;
+        zoomed = !zoomed;
+        log(zoomed ? `page zoomed in to ${vv.scale.toFixed(1)}x` : 'page zoomed back out');
+      });
+    }
+    watchOtherCopies();
   }
 
   /**
@@ -330,7 +343,9 @@ class App {
     if (this.peer?.connected) this.peer.send({ t: 'away', v: hidden });
     if (hidden) {
       this.hiddenAt = now;
-      log('page hidden');
+      // Mid-match, the touch just before says whether a swipe along the
+      // bottom edge took the phone out of the game.
+      log(this.mode === 'match' ? `page hidden mid-match · ${this.input.touchNote(now)}` : 'page hidden');
       audio.stopMusic();
       this.updateHold();
       return;
@@ -384,9 +399,12 @@ class App {
    * gives no browser API for it, so the invite is a link and the phone's own
    * camera does the scanning.
    */
-  consumeInviteLink() {
+  consumeInviteLink(onLoad = false) {
     const hash = location.hash || '';
     if (!/[#?&]j=/.test(hash)) return;
+    // Whether the invite found the game already running here or loaded a
+    // fresh copy says where iOS sent it.
+    log(`invite link opened ${onLoad ? 'with the page' : 'into the running game'}`);
     const code = extractCode(hash);
     // Clear it before connecting, so a reload does not try to rejoin a match
     // that is long over. Not inside a chat app's own browser, though: its
@@ -407,7 +425,7 @@ class App {
     if (this.peer) this.leave(true);
 
     this.screens.toast('Invite found — joining…');
-    this.beginJoin(code);
+    this.beginJoin(code, 'from a link');
   }
 
   saveProfile() {
@@ -963,6 +981,9 @@ class App {
         more: older.length,
         // The cloud league this phone syncs with, for a friend's to join.
         league: cloud.leagueKey() || undefined,
+        // This phone in a line, so the friend's diagnostics can say what was
+        // on the other end. Builds from before it ignore it.
+        dev: device(),
       });
       if (peer.isHost) peer.send(this.setupMsg());
       // The rest of the history, matches between other friends included, so
@@ -1092,6 +1113,8 @@ class App {
         this.theirChar = charById(msg.char).id;
         this.theirFlair = lb.flairById(msg.flair).id;
         this.theirProtocol = Number.isInteger(msg.v) && msg.v > 0 ? msg.v : 1;
+        this.theirDevice = typeof msg.dev === 'string' ? msg.dev.replace(/\s+/g, ' ').slice(0, 100) : null;
+        log(`friend: ${this.theirDevice || 'a build too old to say'} · protocol ${this.theirProtocol}`);
         const added = lb.mergeMatches(msg.matches);
         const received = Array.isArray(msg.matches) ? msg.matches.length : 0;
         // More to come: gather it all and merge once, so thousands of matches
@@ -1357,6 +1380,8 @@ class App {
     const graphics = this.quality === 'low' ? 'fast' : 'full';
     const why = this.qualityPinned ? 'picked' : this.quality !== this.profile.quality ? 'switched automatically' : null;
     const d = this.lastDrop;
+    const zoom = window.visualViewport?.scale || 1;
+    const session = navigator.audioSession?.type;
     const lines = [
       `RoGuPong diagnostics · ${new Date().toISOString().slice(0, 10)} ${clock()}`,
       `build: protocol ${PROTOCOL}`,
@@ -1365,13 +1390,16 @@ class App {
       `screen: ${r.W}x${r.H} at ${window.devicePixelRatio || 1}x, canvas ${r.dpr}x · `
         + `safe area ${s.top}/${s.right}/${s.bottom}/${s.left} (top/right/bottom/left)`,
       `graphics: ${graphics}${why ? ` (${why})` : ''} · ${this.fps ? this.fps + ' fps' : 'fps not measured yet'}`,
-      `audio: ${audio.ctx ? audio.ctx.state : 'not started'} · music ${onOff(this.profile.music)} · sfx ${onOff(this.profile.sfx)}`,
+      `audio: ${audio.ctx ? audio.ctx.state : 'not started'}${session ? ` (${session} session)` : ''} · `
+        + `music ${onOff(this.profile.music)} · sfx ${onOff(this.profile.sfx)}`,
       `wake lock: ${this.wakeLockNote}`,
       `storage: ${this.storageNote} · ${lb.allMatches().length} matches kept`,
       `cloud: ${cloud.describeCloud()}`,
       `page: ${document.hidden ? 'hidden' : 'visible'} · ${navigator.onLine ? 'online' : 'offline'} · `
-        + `on ${this.mode === 'match' ? (this.match?.holding ? 'a paused match' : 'a match') : this.screens.current || '?'}`,
+        + `on ${this.mode === 'match' ? (this.match?.holding ? 'a paused match' : 'a match') : this.screens.current || '?'}`
+        + `${zoom > 1.01 ? ` · zoomed in to ${zoom.toFixed(1)}x` : ''}`,
       `link: ${this.peer ? this.linkSummary(this.peer) : 'none'}`,
+      `friend: ${this.theirProtocol == null ? 'none yet' : this.theirDevice || 'a build too old to say'}`,
       d ? `last drop: ${d.reason} at ${clock(d.wall)} — ${d.plain || d.text}` : 'last drop: none this session',
       ...(d ? [`  ${d.facts.map(([k, v]) => `${k}: ${v}`).join(' · ')}`, `  link then: ${d.link}`] : []),
       '',
@@ -1462,7 +1490,7 @@ class App {
   showHostCode() {
     this.go('host', this.signalData({ stage: 'code', code: this.peer?.code }));
     if (!this.online && scannerSupported()) {
-      requestAnimationFrame(() => this.startScanner((code) => this.acceptAnswer(code)));
+      requestAnimationFrame(() => this.startScanner((code) => this.acceptAnswer(code, 'by the in-game scanner')));
     }
   }
 
@@ -1472,16 +1500,18 @@ class App {
     this.hs = null;
     if (!this.online && scannerSupported()) {
       this.go('join', this.signalData({ stage: 'scan' }));
-      requestAnimationFrame(() => this.startScanner((code) => this.beginJoin(code)));
+      requestAnimationFrame(() => this.startScanner((code) => this.beginJoin(code, 'by the in-game scanner')));
     } else {
       this.go('join', this.signalData({ stage: 'paste' }));
     }
   }
 
-  async beginJoin(offerCode) {
+  /** `how` the invite got here, in words for the log: which ways iPhones actually manage matters. */
+  async beginJoin(offerCode, how) {
     const ticket = ++this.handshakeSeq;
     this.role = 'guest';
     this.hs = null;
+    log(`invite taken ${how}`);
     this.go('join', this.signalData({ stage: 'making' }));
     try {
       const peer = await Peer.join(offerCode);
@@ -1495,19 +1525,23 @@ class App {
       this.go('join', this.signalData({ stage: 'reply', code: peer.code, inviteAt: peer.inviteAt }));
     } catch (err) {
       if (ticket !== this.handshakeSeq) return;
+      log(`invite refused: ${err.message}`);
       this.screens.toast('Bad code: ' + err.message, 'bad');
       this.openJoin();
     }
   }
 
-  async acceptAnswer(code) {
+  /** `how` the reply got here, in words for the log, as for beginJoin. */
+  async acceptAnswer(code, how) {
     const peer = this.peer;
     if (!peer || peer.connected) return;
     // Easily done online: copy the invite link to send, then paste it back.
     if (extractCode(code) === peer.code) {
+      log(`reply taken ${how} was this phone's own invite`);
       this.screens.toast('That\'s your own invite — paste your friend\'s reply', 'bad');
       return;
     }
+    log(`reply taken ${how}`);
     try {
       await peer.acceptAnswer(code);
       if (peer !== this.peer || peer.connected) return;
@@ -1516,6 +1550,7 @@ class App {
       this.go('host', this.signalData({ stage: 'waiting' }));
     } catch (err) {
       if (peer !== this.peer) return;
+      log(`reply refused: ${err.message}`);
       this.screens.toast('Reply rejected: ' + err.message, 'bad');
       this.showHostCode();
     }
@@ -1589,8 +1624,7 @@ class App {
     } catch {
       return;
     }
-    log('handshake: reply taken from the clipboard');
-    this.acceptAnswer(code);
+    this.acceptAnswer(code, 'from the clipboard unasked');
   }
 
   startScanner(onCode) {
@@ -1649,7 +1683,9 @@ class App {
     let text;
     try {
       text = await navigator.clipboard.readText();
-    } catch {
+    } catch (err) {
+      // On iOS the read waits on a Paste bubble, and passing it up refuses.
+      log(`clipboard read failed: ${err.name}`);
       this.screens.toast('Clipboard unavailable — long-press the box and paste', 'bad');
       return;
     }
@@ -1662,8 +1698,8 @@ class App {
       this.screens.toast('No RoGuPong code in the clipboard', 'bad');
       return;
     }
-    if (next === 'use-answer') this.acceptAnswer(code);
-    else this.beginJoin(code);
+    if (next === 'use-answer') this.acceptAnswer(code, 'from the clipboard');
+    else this.beginJoin(code, 'from the clipboard');
   }
 
   /* ------------------------------------------------------------------ */
@@ -1954,13 +1990,13 @@ class App {
       case 'join-paste': this.stopScanner(); this.go('join', this.signalData({ stage: 'paste' })); break;
       case 'use-pasted': {
         const v = document.getElementById('paste-input')?.value.trim();
-        if (v) this.beginJoin(v);
+        if (v) this.beginJoin(v, 'from the paste box');
         break;
       }
       case 'paste-answer': this.stopScanner(); this.go('pasteAnswer', this.signalData({})); break;
       case 'use-answer': {
         const v = document.getElementById('paste-input')?.value.trim();
-        if (v) this.acceptAnswer(v);
+        if (v) this.acceptAnswer(v, 'from the paste box');
         break;
       }
       case 'host-back':
