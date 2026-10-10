@@ -236,10 +236,27 @@ discussion.
 
 ---
 
+## The trailer
+
+**<https://gunnargehtab.github.io/RoGuPong/trailer.html>** is a 17.6-second
+spot for the game, cut to its own chiptune: a pong cold open, the logo, the
+two-scan handshake, RO vs GU, the four stages, a real match and a code to scan
+that opens the game. It is built from the game's own parts (the logotype, the
+pixel font, the stage painters, the QR encoder, the sound effects, and a live
+match drawn by the game's renderer on RO's phone and GU's), so it follows the
+game when the game changes.
+
+Press start for sound. Space pauses, the arrow keys jump between shots, and the
+bar at the bottom scrubs. In the gameplay shot, click (or tap) either phone and
+the trailer holds while you play that side of the match against the computer.
+
+---
+
 ## Project layout
 
 ```
 index.html            the whole app shell
+trailer.html          the trailer page (not part of the game)
 css/style.css         16-bit console UI
 sw.js                 service worker — makes the game work offline
 js/
@@ -268,6 +285,7 @@ js/
     leaderboard.js    local history, peer merging, standings and hero stats
     league.js         league codes and the history CSV
     cloud.js          optional cloud league sync
+  trailer/            the trailer: the cut and its score, the shots, the live match
 cloud/                the optional league-sync Worker, with deploy notes
 ```
 
