@@ -205,7 +205,8 @@ up far more often. Same physics, same specials — just played in a hailstorm.
 
 **Emotes and quick-chat** in the lobby, on the results and on the pause
 screen: eight emoji, and eight lines like "GG", "Nice shot!" and "Rematch?"
-that pop up in a speech bubble on the other phone. Never mid-rally.
+that pop up in a speech bubble on the other phone. Never mid-rally. Play the
+same friend long enough and you earn a ninth.
 
 **Flair** is earned, not bought: a rainbow trail for a 20-hit rally, flames
 for ten wins, starlight for touring all four stages, gold for a shutout. Each
@@ -219,6 +220,11 @@ playing: a loss earns more than half of what a win does. Your level shows on
 the title screen, both levels in the lobby and everyone's on the leaderboard;
 the results screen shows what the match earned. Like flair, it is worked out
 from the shared match history, so it's the same on every phone.
+
+**Rivalries** rank every pair of friends by how many matches they've played
+each other, from NEW RIVALS at the first match to ETERNAL at 300, whoever
+won them. The lobby shows yours under the two names, and the leaderboard
+lists all your rivals. NEMESES (75 matches) get a quick-chat line of their own.
 
 **Four stages**, each a real place painted in code as a 16-bit scene, with a
 court floor that is the same place seen from above: **Navigli Night** — the

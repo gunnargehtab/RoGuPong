@@ -21,12 +21,15 @@ import { isIOS, inAppBrowser } from '../diag.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
 // would make old phones pop the wrong one. Eight emoji in two grid rows, then
-// the quick-chat lines, which a build from before them pops as a 👋.
+// the quick-chat lines, which a build from before them pops as a 👋. The last
+// is a rivalry's own, offered only to a pair at RIVAL_LINE_RANK or above.
 export const EMOTES = [
   '🔥', '😎', '😱', '🍕', '🤣', '👻', '🚀', '💩',
   'GG', 'Nice shot!', 'So close!', 'Rematch?', 'Ready?', 'One sec!', 'Sorry!', 'Hurry up!',
+  'Not you again!',
 ];
 export const QUICK_CHAT_FROM = 8;
+const RIVAL_LINE = 16;
 
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {
@@ -290,9 +293,11 @@ export class Screens {
     const bar = document.createElement('div');
     bar.className = 'chat';
     const btn = (e, i) => `<button data-action="emote" data-emote="${i}">${esc(e)}</button>`;
+    const rivals = lb.rivalry(this.profile.name || 'YOU', this.app.theirName || 'FRIEND').rank >= lb.RIVAL_LINE_RANK;
+    const lines = EMOTES.map((e, i) => i).filter((i) => i >= QUICK_CHAT_FROM && (i !== RIVAL_LINE || rivals));
     bar.innerHTML = `
       <div class="emotes">${EMOTES.slice(0, QUICK_CHAT_FROM).map(btn).join('')}</div>
-      <div class="quick">${EMOTES.slice(QUICK_CHAT_FROM).map((e, i) => btn(e, i + QUICK_CHAT_FROM)).join('')}</div>`;
+      <div class="quick">${lines.map((i) => btn(EMOTES[i], i)).join('')}</div>`;
     return bar;
   }
 
@@ -642,7 +647,30 @@ export class Screens {
           <td class="num">${r.diff > 0 ? '+' : ''}${r.diff}</td>
           <td class="num">${r.bestRally}</td>
         </tr>`).join('')}
+      </tbody></table>${this.rivalsHtml()}`;
+  }
+
+  /** The friends I have played, most-played first, with where each rivalry stands. */
+  rivalsHtml() {
+    const list = lb.rivals(this.profile.name || 'YOU');
+    if (!list.length) return '';
+    return `<h3 style="margin-top:14px">Your rivals</h3>
+      <table style="margin-top:6px"><tbody>${list.map((r) => `
+        <tr>
+          <td><b>${esc(r.them)}</b><br><small class="warn">${r.name}</small></td>
+          <td class="num"><small>${r.played} played<br>${r.won}&ndash;${r.lost}</small></td>
+          <td class="num"><small class="muted">${r.next ? `${r.next.name}<br>at ${r.next.at}` : 'top rank'}</small></td>
+        </tr>`).join('')}
       </tbody></table>`;
+  }
+
+  /** "⚔️ ARCH RIVALS · 34 matches · 18–16 · NEMESES at 75", from my side. */
+  rivalryHtml(them) {
+    const r = lb.rivalry(this.profile.name || 'YOU', them);
+    if (r.rank < 0) return '<span class="muted">⚔️ Your first match together</span>';
+    return `⚔️ <b class="warn">${r.name}</b>
+      <span class="muted">&middot; ${r.played} match${r.played === 1 ? '' : 'es'} &middot; ${r.won}&ndash;${r.lost}${
+  r.next ? ` &middot; ${r.next.name} at ${r.next.at}` : ''}</span>`;
   }
 
   /** Under a Standings name: the favourite hero, then a badge per flair track reached. */
@@ -1205,7 +1233,8 @@ export class Screens {
         <span>${esc(theirName || 'FRIEND')}
           <span class="warn">LV&nbsp;${lb.levelProgress(theirName || 'FRIEND').level}</span>${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
           class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
-      </div>`;
+      </div>
+      <div class="center" style="margin-top:8px"><small>${this.rivalryHtml(theirName || 'FRIEND')}</small></div>`;
     wrap.appendChild(versus);
 
     // Online, a round trip of a tenth of a second or more is ordinary. The
@@ -1421,6 +1450,7 @@ export class Screens {
         <tr><td>Stage</td><td class="num">${esc((STAGES.find((s) => s.id === rec.stage) || STAGES[0]).name)}</td></tr>
         <tr><td>Head to head</td><td class="num">
           <b>${h2h.a}</b> &ndash; <b>${h2h.b}</b></td></tr>
+        <tr><td>Rivalry</td><td class="num"><b class="warn">${lb.rivalry(me.name, them.name).name || ''}</b></td></tr>
       </table>`;
     wrap.appendChild(panel);
 
