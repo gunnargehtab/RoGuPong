@@ -986,6 +986,18 @@ results screen what the match earned, with the bar filling from where the
 match found you. A level-up toasts and plays a short arpeggio. The numbers
 are first guesses, like the flair steps.
 
+Every five levels bring a reward (`LEVEL_REWARDS`), so there is always one
+in sight. Each brings a title: ROOKIE at 5, then CONTENDER, ACE, VETERAN,
+CHAMPION and MASTER at the cap. The lobby shows it under both names and the
+title screen next to your level. Level 10 also unlocks the COMET flair: an
+icy trail, and a glint that sweeps the paddle. It rides `pick` like every
+flair, so an older build draws STANDARD in its place. Level 20 turns your
+victory jingle into a longer fanfare, on your own phone. Level 30 turns the
+level into a starred gold badge wherever it shows. Like the levels, every
+reward is worked out from the level when it is asked for, never written down.
+Crossing a reward level toasts what it brought. All of them are cosmetic:
+nothing a level brings touches play.
+
 **Rivalry.** Each pair of friends has a rank too, from the matches the two
 have played each other:
 
