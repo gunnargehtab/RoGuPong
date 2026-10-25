@@ -17,6 +17,9 @@
   --magenta: #ff56d0;
   --green: #8affc1;
   --panel: rgba(20, 10, 40, 0.86);
+  /* The stage behind the menus sets these (App.applyAccent). */
+  --accent: #ffb347;
+  --accent-line: #8e6a4a;
   --font: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
 }
 
@@ -93,14 +96,20 @@ canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
 
 /* ---------------- panels ---------------- */
 
+/* A 16-bit dialog frame: a dark outline, the white border, a dark gap and
+   an inner line in the stage's accent, over the panel's own drop. */
 .panel {
   background: var(--panel);
   border: 3px solid var(--edge);
-  box-shadow: 0 6px 0 var(--shadow), inset 0 0 0 3px rgba(0,0,0,0.55);
-  padding: 14px;
+  box-shadow:
+    0 0 0 2px var(--shadow),
+    0 6px 0 2px var(--shadow),
+    inset 0 0 0 2px var(--shadow),
+    inset 0 0 0 4px var(--accent-line);
+  padding: 16px;
 }
 
-.panel.tight { padding: 10px; }
+.panel.tight { padding: 12px; }
 
 .title-bar {
   display: flex;
@@ -159,6 +168,13 @@ b, strong { color: var(--ink); }
 .btn.small { min-height: 42px; padding: 10px 12px; font-size: 0.72rem; }
 /* Back from the chat app: the button that finishes the job, pointed at. */
 .btn.nudge { border-color: var(--cyan); animation: blink 0.45s steps(2) 6; }
+/* A main button carries a pixel icon (buttonIcons in screens.js) before its label. */
+.btn.iconed { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.btn-icon { display: block; flex: none; }
+/* Keyboard players get a ring; a thumb never sees it. */
+.btn:focus-visible, .tabs button:focus-visible, .fighter:focus-visible, .textbtn:focus-visible {
+  outline: 3px solid var(--cyan); outline-offset: 2px;
+}
 
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
@@ -277,6 +293,7 @@ tr.split td.num { padding-left: 5px; }
   color: var(--dim); background: #170c2c; border: 3px solid #3d2a63; cursor: pointer;
 }
 .tabs button[aria-selected="true"] { color: #180a24; background: var(--gold); border-color: #fff; }
+.tabs button:active { transform: translateY(2px); }
 
 /* ---------------- misc ---------------- */
 
@@ -380,6 +397,6 @@ summary { padding: 12px 0; cursor: pointer; }
 
 @media (max-height: 620px) {
   .screen { gap: 9px; }
-  .panel { padding: 10px; }
+  .panel { padding: 12px; }
   .btn { min-height: 46px; padding: 11px 14px; }
 }
