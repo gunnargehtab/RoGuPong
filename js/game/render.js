@@ -1373,8 +1373,13 @@ export class Renderer {
       });
     } else if (m.phase === 'over') {
       const youWon = m.winner === view;
+      // Sized to the court, not the overlay scale: at 1.5x that scale the
+      // eight glyphs of YOU LOSE ran 1.2 court widths and lost a letter off
+      // each edge of a phone screen. Both lines share the longer one's size
+      // so the winner's and the loser's banners match.
+      const fit = Math.max(1, c.w * 0.92 / measure('YOU LOSE'));
       drawText(ctx, youWon ? 'YOU WIN' : 'YOU LOSE', cx, cy, {
-        scale: scale * 1.5, color: youWon ? '#ffd93b' : '#9aa4c8',
+        scale: fit, color: youWon ? '#ffd93b' : '#9aa4c8',
         outline: '#1a0d2b', align: 'center', baseline: 'middle',
       });
     }
