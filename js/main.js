@@ -6,6 +6,7 @@
 // own paddle so the controls never feel rubbery.
 
 import { Screens, EMOTES, QUICK_CHAT_FROM, STALE_INVITE, madeAgo } from './ui/screens.js';
+import { emoteCanvas } from './ui/emotes.js';
 import { Renderer } from './game/render.js';
 import { Input } from './game/input.js';
 import { Fx, reactTo } from './game/fx.js';
@@ -1456,7 +1457,7 @@ class App {
       who.textContent = theirs ? this.theirName || 'FRIEND' : 'YOU';
       el.replaceChildren(who, EMOTES[i]);
     } else {
-      el.textContent = EMOTES[i] || '👋';
+      el.replaceChildren(emoteCanvas(EMOTES[i] || 'wave', 6));
     }
     void el.offsetWidth;
     el.classList.add('show');

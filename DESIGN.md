@@ -741,6 +741,11 @@ no internet.
   8×8 lowercase — rendered with a hard outline, a drop shadow, a vertical
   colour ramp per letter (Ro warm, Gu cool, Pong gold), a gentle arc across the
   word and a specular highlight that sweeps across it every few seconds.
+- **The emotes** are 12×12 pixel icons hand-placed in `js/ui/emotes.js`, the
+  way the hero mascots are. They replaced the platform's emoji, which were the
+  one set of glyphs in the game that came from outside it: smooth-edged, and
+  a different drawing on every phone. The eight still mean what the emoji
+  did, so a phone on an older build pops the matching emoji for the same index.
 - **All in-game text** uses a 62-glyph 5×7 bitmap font defined in this repo, so
   the game looks identical on every handset. Outlines are drawn thinner than
   one font pixel, because a full-pixel outline swallows the counters of glyphs
@@ -990,7 +995,7 @@ belongs to both of them. The lobby shows it under the two names with the
 head-to-head and the next rank, the results carry it as a row, a rank-up
 toasts, and the Standings tab lists your rivals, most-played first. From
 NEMESES on, the pair's quick-chat gets a line of its own, "Not you again!",
-appended to the list like any other line so a build from before it pops a 👋.
+appended to the list like any other line so a build from before it pops a wave.
 One name on both sides of a record is no rivalry and is left out. Counted in
 one cached pass over the history, like the rest.
 
@@ -1161,10 +1166,11 @@ compositor — a real slice of touch-to-paddle latency on Android.
   identity, and that is enough for a leaderboard between friends — with a
   nudge when a name is missing or taken (§8).
 - **No in-game voice, video or free-text chat.** Players talk through eight
-  emoji and eight quick-chat lines ("GG", "Nice shot!", "Rematch?", "One
+  emotes and eight quick-chat lines ("GG", "Nice shot!", "Rematch?", "One
   sec!"…), plus one more for a pair of NEMESES or above (§8), in the lobby,
-  on the results and on the pause screen, never over a rally in progress. They travel as an index into one list, so new lines are
-  only ever appended, and a build from before them pops a 👋 instead. A line
+  on the results and on the pause screen, never over a rally in progress.
+  They travel as an index into one list, so new lines are only ever
+  appended, and a build from before them pops a wave instead. A line
   arrives in a speech bubble naming who sent it. Voice was ruled out because
   turning on the microphone changes how iOS routes the game's sound. Video
   was ruled out because a video tile covers the court on a portrait phone.

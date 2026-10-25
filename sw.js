@@ -16,6 +16,7 @@ const ASSETS = [
   'js/ui/pixelfont.js',
   'js/ui/logo.js',
   'js/ui/screens.js',
+  'js/ui/emotes.js',
   'js/net/qr.js',
   'js/net/sdp.js',
   'js/net/peer.js',
