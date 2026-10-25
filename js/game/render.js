@@ -90,6 +90,28 @@ const subScale = (s) => Math.max(1, s - 1);
 const meterHeight = (s) => Math.max(5, Math.round(s * 2.2));
 const streakScale = (s) => Math.max(1, Math.round(s / 3));
 
+const chromeCache = new Map();
+/**
+ * A hero in its CHROME look, the level-25 reward: the paddle's colour mixed
+ * most of the way to silver, so it is still the hero's own and never gold,
+ * with the hero's own colour kept for the trim and the meter.
+ */
+function chromed(ch) {
+  let c = chromeCache.get(ch.id);
+  if (!c) {
+    const n = parseInt(ch.color.slice(1), 16);
+    const silver = [0xd8, 0xdc, 0xe8];
+    const color = '#' + [n >> 16, (n >> 8) & 255, n & 255]
+      .map((v, k) => Math.round(v + (silver[k] - v) * 0.6).toString(16).padStart(2, '0')).join('');
+    c = { ...ch, color, color2: ch.color };
+    chromeCache.set(ch.id, c);
+  }
+  return c;
+}
+
+// A stage's art is cached per stage and per variant: by night it is the same id.
+const stageKey = (stage) => (stage.variant ? `${stage.id}~${stage.variant}` : stage.id);
+
 // The COMET flair's trail, tail to ball.
 const COMET = ['#5b3fd1', '#7a6bff', '#7fd8ff', '#d9f6ff'];
 
@@ -432,7 +454,7 @@ export class Renderer {
   draw(m, opts) {
     const {
       view = 0, stage, fx, time = 0, names = ['P1', 'P2'], chars,
-      flairs = ['none', 'none'], masters = [false, false],
+      flairs = ['none', 'none'], masters = [false, false], chromes = [false, false],
       localPaddleX = null, rtt = 0, showTouchHint = false, showTapHint = false,
     } = opts;
     const ctx = this.ctx;
@@ -465,7 +487,7 @@ export class Renderer {
     this.drawProps(m, flip, time, chars);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
-    this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time, masters);
+    this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time, masters, chromes);
     if (reveal < 1) ctx.restore();
     this.drawFx(fx, flip);
     this.drawBanners(m, flip, chars, view, time);
@@ -525,7 +547,7 @@ export class Renderer {
     const M = SHAKE_MARGIN;
     const ap = this.ap;
     const scene = stage.scene;
-    const key = `${stage.id}:${this.W}x${this.H}@${ap}`;
+    const key = `${stageKey(stage)}:${this.W}x${this.H}@${ap}`;
     const live = this.quality !== 'low' && scene.animateBackdrop;
     let art = this.sceneLayer('backdrop', key,
       this.W + M * 2, this.H + M * 2, (octx, w, h) => scene.backdrop(octx, w, h));
@@ -587,7 +609,7 @@ export class Renderer {
     const scene = stage.scene;
     // Keyed on the art pixel too: two screens can share a court size but not
     // an art pixel, and the cache now outlives a resize.
-    const art = this.sceneLayer('court', `${stage.id}:${c.w}x${c.h}@${ap}`,
+    const art = this.sceneLayer('court', `${stageKey(stage)}:${c.w}x${c.h}@${ap}`,
       c.w, c.h, (octx, w, h) => scene.court(octx, w, h));
     // The art canvas rounds up to whole art pixels; centre the overhang so a
     // floor painted symmetric stays symmetric on screen.
@@ -1025,7 +1047,8 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0, masters = [false, false]) {
+  drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0, masters = [false, false],
+    chromes = [false, false]) {
     const ctx = this.ctx;
     const c = this.court;
     for (let i = 0; i < 2; i++) {
@@ -1034,7 +1057,7 @@ export class Renderer {
       const h = PADDLE_H * c.h * 1.6;
       const px = (i === view && localPaddleX != null ? localPaddleX : p.x);
       const [sx, sy] = this.pt(px, PADDLE_Y[i], flip);
-      const ch = chars[i];
+      const ch = chromes[i] ? chromed(chars[i]) : chars[i];
       if (i === view) this.myPaddle = { x: sx, w };
 
       // The special lives on the paddle: a full meter blinks the whole paddle

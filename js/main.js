@@ -13,7 +13,7 @@ import { Fx, reactTo } from './game/fx.js';
 import { audio } from './game/audio.js';
 import { Match } from './game/match.js';
 import { byId as charById, BALANCE } from './game/characters.js';
-import { STAGES, stageById } from './game/stages.js';
+import { STAGES, stageView } from './game/stages.js';
 import { mix } from './game/scenes/kit.js';
 import { itemById } from './game/items.js';
 import { Peer } from './net/peer.js';
@@ -49,13 +49,18 @@ const HISTORY_CHUNK = 40;
 //      snapshot, and GU's midline wall is a prop older builds can't draw
 //   4  a match pauses while a phone is off its screen; the hold rides the
 //      snapshot
-const PROTOCOL = 4;
+//   5  a stage can be played by night; the host's choice rides setup and start
+const PROTOCOL = 5;
 // GU's midline wall waits for both phones to speak this: an older guest would
 // see the ball bounce off nothing, to the sound and spray of a snowdrift.
 const MIDLINE_SINCE = 3;
 // Likewise the pause: an older phone would neither hold its match for this
 // one nor count back in, and gives up on a quiet friend after 8 s regardless.
 const PAUSE_SINCE = 4;
+// A night stage is the host's pick for both phones, so it waits for both to
+// speak this: an older guest would draw the day stage while the host's showed
+// night.
+const NIGHT_SINCE = 5;
 // How long the other phone may go unheard before the link is given up on. In
 // play, a silent opponent is a point being lost; anywhere else nothing is, and
 // a friend who is sharing their reply from a chat app needs the time.
@@ -212,6 +217,10 @@ class App {
     this.myChar = this.profile.char;
     this.theirChar = 'gu';
     this.theirFlair = 'none';
+    this.theirChrome = false;
+    // The host's wish for a night stage. Whether it is shown is canNight()'s
+    // call, and this.stage is what is shown.
+    this.night = false;
     this.theirName = '';
     this.theirProtocol = null;    // from their 'hello'; null until it arrives
     this.theirDevice = null;      // their phone in a line, from their 'hello', for the diagnostics
@@ -647,6 +656,7 @@ class App {
       chars: m.chars,
       flairs: this.flairs(),
       masters: this.masters,
+      chromes: this.chromes(),
       localPaddleX: this.predictX,
       rtt: this.peer ? this.peer.rtt : 0,
       showTouchHint: !this.input.touched && m.phase === 'countdown' && !m.holding,
@@ -746,8 +756,8 @@ class App {
   /* ------------------------------------------------------------------ */
   /* Match lifecycle                                                     */
 
-  startMatch({ seed, stage, target, chars, mid, party, balance }) {
-    this.stage = stageById(stage);
+  startMatch({ seed, stage, night, target, chars, mid, party, balance }) {
+    this.stage = stageView(stage, !!night);
     this.target = target;
     this.party = !!party;
     this.matchId = mid;
@@ -857,11 +867,13 @@ class App {
         // What the levels crossed bring with them.
         const crossed = (at) => at > levelBefore && at <= level;
         for (const r of lb.LEVEL_REWARDS.filter((x) => crossed(x.level))) {
-          this.screens.toast(`🏅 New title: ${r.title}`, 'good');
-          if (r.fanfare) this.screens.toast('🎺 Victory fanfare unlocked!', 'good');
+          this.screens.toast(`New title: ${r.title}`, 'good', 'up');
+          for (const what of ['night', 'fanfare', 'chrome']) {
+            if (r[what]) this.screens.toast(`${r[what]} unlocked!`, 'good', what === 'night' ? 'moon' : 'spark');
+          }
         }
         for (const f of lb.FLAIRS.filter((x) => x.level && crossed(x.level))) {
-          this.screens.toast(`✨ ${f.name} flair unlocked!`, 'good');
+          this.screens.toast(`${f.name} flair unlocked!`, 'good', 'spark');
         }
       }
       const stars = lb.mastery(me, hero).stars;
@@ -1048,6 +1060,8 @@ class App {
         name: this.profile.name || (peer.isHost ? 'HOST' : 'GUEST'),
         char: this.myChar,
         flair: this.profile.flair,
+        // The CHROME paddle; builds from before it ignore it and draw the hero's own.
+        chrome: this.profile.chrome || undefined,
         matches: history.slice(-HISTORY_SHARED),
         more: older.length,
         // The cloud league this phone syncs with, for a friend's to join.
@@ -1114,7 +1128,34 @@ class App {
   }
 
   setupMsg() {
-    return { t: 'setup', stage: this.stage.id, target: this.target, party: this.party };
+    return {
+      t: 'setup', stage: this.stage.id, target: this.target, party: this.party,
+      night: this.stage.variant === 'night' || undefined,
+    };
+  }
+
+  /**
+   * Whether the host may show a night stage: its player has the level, and
+   * the other phone speaks NIGHT_SINCE, so both draw the same stage.
+   */
+  canNight() {
+    return lb.unlockedAt(lb.levelProgress(this.profile.name || 'YOU').level, 'night')
+      && this.sharedProtocol() >= NIGHT_SINCE;
+  }
+
+  /** The host shows stage `id`, by night when it wants that and may. */
+  setStage(id) {
+    this.stage = stageView(id, this.night && this.canNight());
+  }
+
+  pickMsg() {
+    return { t: 'pick', char: this.myChar, flair: this.profile.flair, chrome: !!this.profile.chrome };
+  }
+
+  /** CHROME looks by player index (0 host, 1 guest), for the renderer. */
+  chromes() {
+    const mine = !!this.profile.chrome;
+    return this.view === 0 ? [mine, this.theirChrome] : [this.theirChrome, mine];
   }
 
   lobbyData() {
@@ -1128,6 +1169,9 @@ class App {
       myReady: this.myReady,
       myFlair: this.profile.flair,
       flairProgress: lb.flairProgress(this.profile),
+      night: this.stage.variant === 'night',
+      nightOK: this.canNight(),
+      chrome: !!this.profile.chrome,
       stage: this.stage.id,
       crates: this.knownCrates(),
       target: this.target,
@@ -1183,6 +1227,7 @@ class App {
         this.theirName = String(msg.name || '').slice(0, 10).toUpperCase();
         this.theirChar = charById(msg.char).id;
         this.theirFlair = lb.flairById(msg.flair).id;
+        this.theirChrome = !!msg.chrome;
         this.theirProtocol = Number.isInteger(msg.v) && msg.v > 0 ? msg.v : 1;
         this.theirDevice = typeof msg.dev === 'string' ? msg.dev.replace(/\s+/g, ' ').slice(0, 100) : null;
         log(`friend: ${this.theirDevice || 'a build too old to say'} · protocol ${this.theirProtocol}`);
@@ -1202,6 +1247,13 @@ class App {
         } else if (this.theirProtocol > PROTOCOL) {
           this.screens.toast('This phone\'s game is out of date', 'warn');
         }
+        // Now that the host knows what the guest speaks, a night it wanted
+        // can show (or must not).
+        if (this.peer.isHost) {
+          const was = this.stage;
+          this.setStage(this.stage.id);
+          if (this.stage !== was) this.peer.send(this.setupMsg());
+        }
         this.refreshLobby();
         break;
       }
@@ -1213,7 +1265,7 @@ class App {
         break;
       case 'setup':
         if (!this.peer.isHost) {
-          this.stage = stageById(msg.stage);
+          this.stage = stageView(msg.stage, !!msg.night);
           this.target = msg.target;
           this.party = !!msg.party;
           this.refreshLobby();
@@ -1222,6 +1274,7 @@ class App {
       case 'pick':
         this.theirChar = charById(msg.char).id;
         if (msg.flair != null) this.theirFlair = lb.flairById(msg.flair).id;
+        if (msg.chrome != null) this.theirChrome = !!msg.chrome;
         this.refreshLobby();
         break;
       case 'ready':
@@ -2094,20 +2147,34 @@ class App {
       case 'pick-char':
         this.myChar = data.char;
         this.saveProfile();
-        this.peer?.send({ t: 'pick', char: this.myChar, flair: this.profile.flair });
+        this.peer?.send(this.pickMsg());
+        this.refreshLobby();
+        break;
+      case 'pick-chrome':
+        if (!lb.unlockedAt(lb.levelProgress(this.profile.name || 'YOU').level, 'chrome')) break;
+        this.profile.chrome = !this.profile.chrome;
+        lb.saveProfile(this.profile);
+        this.peer?.send(this.pickMsg());
+        this.refreshLobby();
+        break;
+      case 'toggle-night':
+        if (!this.canNight()) break;
+        this.night = !this.night;
+        this.setStage(this.stage.id);
+        this.peer?.send(this.setupMsg());
         this.refreshLobby();
         break;
       case 'pick-flair': {
         if (!lb.flairProgress(this.profile).unlocked[data.flair]) break;
         this.profile.flair = lb.flairById(data.flair).id;
         lb.saveProfile(this.profile);
-        this.peer?.send({ t: 'pick', char: this.myChar, flair: this.profile.flair });
+        this.peer?.send(this.pickMsg());
         this.refreshLobby();
         break;
       }
       case 'cycle-stage': {
         const i = STAGES.findIndex((s) => s.id === this.stage.id);
-        this.stage = STAGES[(i + 1) % STAGES.length];
+        this.setStage(STAGES[(i + 1) % STAGES.length].id);
         this.peer?.send(this.setupMsg());
         this.refreshLobby();
         break;
@@ -2163,6 +2230,7 @@ class App {
       t: 'start',
       seed: (Math.random() * 0xffffffff) >>> 0,
       stage: this.stage.id,
+      night: this.stage.variant === 'night' || undefined,
       target: this.target,
       party: this.party,
       chars: [this.myChar, this.theirChar],

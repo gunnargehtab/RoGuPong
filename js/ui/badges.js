@@ -1,6 +1,6 @@
 // RoGuPong — the small badges that sit in a line of text: the flair tracks'
 // marks on the standings and in the lobby, the padlock of a tier not yet
-// reached, and the rivalry's crossed swords. 12×12 pixel glyphs drawn in
+// reached, the rivalry's crossed swords and the moon of a night stage. 12×12 pixel glyphs drawn in
 // code, like the emotes they replaced emoji alongside.
 
 import { artCanvas } from './emotes.js';
@@ -14,6 +14,7 @@ const COLORS = {
   g: '#a99cc8',   // the padlock, in the menus' dim ink
   s: '#d8d8e8',   // blades
   c: '#d98b3c',   // hilts
+  m: '#e8eefc',   // the moon
 };
 
 const ART = {
@@ -132,6 +133,20 @@ const ART = {
     '.....ky.....',
     '.....kk.....',
   ],
+  moon: [
+    '............',
+    '....kkkkk...',
+    '...kmmmk....',
+    '..kmmmk.....',
+    '.kmmmk......',
+    '.kmmmk......',
+    '.kmmmk......',
+    '.kmmmk......',
+    '..kmmmk.....',
+    '...kmmmk....',
+    '....kkkkk...',
+    '............',
+  ],
   swords: [
     's.........s.',
     '.s.......s..',
@@ -150,7 +165,7 @@ const ART = {
 
 export const BADGE_LABELS = {
   rainbow: 'Rainbow', flame: 'Flame', star: 'Starlight', crown: 'Royal',
-  lock: 'Locked', swords: 'Rivalry', party: 'Party mode', up: 'Level up', spark: 'Unlocked',
+  lock: 'Locked', moon: 'Night', swords: 'Rivalry', party: 'Party mode', up: 'Level up', spark: 'Unlocked',
 };
 
 /** A canvas element showing badge `id`, `px` CSS pixels a pixel. */

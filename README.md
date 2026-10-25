@@ -221,8 +221,9 @@ the title screen, both levels in the lobby and everyone's on the leaderboard;
 the results screen shows what the match earned. Like flair, it is worked out
 from the shared match history, so it's the same on every phone. Every five
 levels bring something: a title (ROOKIE, CONTENDER, ACE, VETERAN, CHAMPION,
-MASTER), the COMET flair at 10, a longer victory fanfare at 20 and a gold
-badge at 30.
+MASTER), the COMET flair at 10, night stages for the host to pick at 15
+(Duomo, Brera and the Alpi by night, on both phones), a longer victory
+fanfare at 20, a silvery CHROME paddle at 25 and a gold badge at 30.
 
 **Rivalries** rank every pair of friends by how many matches they've played
 each other, from NEW RIVALS at the first match to ETERNAL at 300, whoever
