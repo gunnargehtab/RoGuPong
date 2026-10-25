@@ -749,7 +749,12 @@ no internet.
 - **All in-game text** uses a 62-glyph 5×7 bitmap font defined in this repo, so
   the game looks identical on every handset. Outlines are drawn thinner than
   one font pixel, because a full-pixel outline swallows the counters of glyphs
-  like 0 and 8 and turns a score into an unreadable brick.
+  like 0 and 8 and turns a score into an unreadable brick. The menus' panel
+  headings are painted in it too (`pixelHeadings` in `screens.js`, wrapping a
+  long one on words), so only body text falls to whatever monospace the phone
+  has — and there is less of that: How to Play is short panels, play first and
+  connecting after, with every crate and what happens when things go wrong
+  behind folds.
 - **The stages** are real places, painted in code. Each is a scene module that
   paints two pictures: the backdrop, the place seen side-on, and the court
   floor, the same place seen from above — the Navigli canal at blue hour with

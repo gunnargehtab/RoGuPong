@@ -118,6 +118,9 @@ small { font-size: 0.7rem; color: var(--dim); }
 b, strong { color: var(--ink); }
 
 .pixel-label { display: block; margin: 0 auto; }
+/* Panel headings, painted in the pixel font (pixelHeadings in screens.js). */
+.pixel-h { display: block; margin: 0 0 6px; }
+.title-bar > .pixel-h { margin: 0; }
 
 /* ---------------- buttons ---------------- */
 

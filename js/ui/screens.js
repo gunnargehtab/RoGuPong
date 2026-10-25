@@ -34,6 +34,57 @@ export const EMOTES = [
 export const QUICK_CHAT_FROM = 8;
 const RIVAL_LINE = 16;
 
+/**
+ * A panel heading in the pixel font: left-aligned, wrapped on words to
+ * `maxWidth`, so a long one on a narrow phone takes two lines rather than
+ * running out of its panel. The screen's h3 elements become these (see
+ * pixelHeadings), leaving only body text to the phone's monospace.
+ */
+export function pixelHeading(text, { color = '#5fd9ff', maxWidth = 320, scale = 2 } = {}) {
+  const words = String(text).replace(/[\u2018\u2019]/g, "'").toUpperCase().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    const next = line ? line + ' ' + w : w;
+    if (line && measure(next, scale) + scale * 2 > maxWidth) { lines.push(line); line = w; }
+    else line = next;
+  }
+  if (line) lines.push(line);
+  const lineH = GLYPH_H * scale + scale * 2;
+  const w = Math.max(1, ...lines.map((l) => measure(l, scale) + scale * 2));
+  const h = lineH * lines.length;
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(w * dpr);
+  canvas.height = Math.ceil(h * dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.className = 'pixel-h';
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', text);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  lines.forEach((l, i) => drawText(ctx, l, scale, i * lineH + lineH / 2, {
+    scale, color, outline: '#1a0d2b', align: 'left', baseline: 'middle',
+  }));
+  return canvas;
+}
+
+/**
+ * Every h3 under `root` repainted in the pixel font. A gold one (class
+ * warn) or one coloured inline keeps its colour; the rest are cyan, as the
+ * h3 style was. The h3's own margins carry over.
+ */
+export function pixelHeadings(root, maxWidth) {
+  for (const h of root.querySelectorAll('h3')) {
+    const color = h.classList.contains('warn') ? '#ffd93b' : h.style.color || '#5fd9ff';
+    const c = pixelHeading(h.textContent.trim(), { color, maxWidth });
+    if (h.style.marginTop) c.style.marginTop = h.style.marginTop;
+    h.replaceWith(c);
+  }
+}
+
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {
   const { scale = 3, color = '#ffd93b', outline = '#1a0d2b', tracking = 1 } = opts;
@@ -142,6 +193,12 @@ export class Screens {
     document.activeElement?.blur?.();
     this.root.innerHTML = '';
     this.root.appendChild(build.call(this, data));
+    pixelHeadings(this.root, this.headingWidth());
+  }
+
+  /** The widest a panel heading can be: the panel's inside, on this screen. */
+  headingWidth() {
+    return Math.min(this.root.clientWidth - 62, 426);
   }
 
   hide() {
@@ -230,7 +287,9 @@ export class Screens {
   /** The leaderboard's cloud sync lines, as a sync starts and ends. */
   tickCloud() {
     const el = document.getElementById('cloud-box');
-    if (el) el.innerHTML = this.cloudHtml();
+    if (!el) return;
+    el.innerHTML = this.cloudHtml();
+    pixelHeadings(el, this.headingWidth());
   }
 
   /** The lobby's latency figure. */
@@ -390,53 +449,57 @@ export class Screens {
     const multi = itemById('multi');
     const crateItem = (i) => `<li style="margin-top:3px">${crateName(i)} — ${esc(i.blurb)}</li>`;
     const crateList = (list) => `<ul style="margin:4px 0 0;padding:0;list-style:none">${list}</ul>`;
-    const items = crateList(`<li style="margin-top:3px">${crateName(multi)} — ${esc(multi.blurb)} On every stage.</li>`)
+    const items = `<p style="margin-top:6px">${crateName(multi)} — ${esc(multi.blurb)}</p>`
       + STAGES.map((st) => `
         <p style="margin-top:8px"><b style="color:${st.accent}">${esc(st.name)}</b></p>
         ${crateList(st.items.filter((id) => id !== 'multi').map((id) => crateItem(itemById(id))).join(''))}`).join('');
     const chars = CHARACTERS.map((c) =>
       `<li><b>${esc(c.name)}</b> — ${esc(c.special.name)}: ${esc(c.special.desc)}</li>`).join('');
 
-    const panel = document.createElement('div');
-    panel.className = 'panel';
-    panel.innerHTML = `
-      <h3>Getting connected</h3>
-      <p>One of you picks <b>Host</b> and shows the code on screen. The other picks
-      <b>Join</b> and points their camera at it, then shows the reply back — the
-      host&rsquo;s camera is already watching for it. That is the whole handshake:
-      after that the phones talk straight to each other over the WiFi. No camera?
-      Every step can also <b>share</b> or paste the code through any chat app.</p>
-      <h3 style="margin-top:12px">Playing online</h3>
-      <p>Not on the same WiFi? Pick <b>Online</b>: you send an invite through any chat
-      app, your friend taps it and sends back a reply, and you paste that in. Some
-      networks, mobile data especially, can&rsquo;t connect two phones directly &mdash;
-      then try a WiFi or a phone hotspot. Keep a call going alongside to talk while you
-      play; online, the music plays quieter for it.</p>
-      <h3 style="margin-top:12px">If the link drops</h3>
-      <p>Both phones go straight back to connecting, with your picks and the host&rsquo;s
-      settings kept &mdash; one more handshake and you&rsquo;re back in the lobby.</p>
-      <h3 style="margin-top:12px">Controls</h3>
-      <p>Slide your thumb anywhere to move your paddle. Where the ball hits the paddle
-      decides the angle: middle sends it straight, edges send it wide. Moving as you
-      connect adds spin.</p>
-      <h3 style="margin-top:12px">Your special</h3>
-      <p>Every return charges your special: watch the strip inside your paddle fill.
-      When the paddle blinks it is ready — <b>tap your paddle</b> to fire it. On a
-      keyboard, Space does it.</p>
-      <ul style="margin:6px 0 0;padding-left:16px">${chars}</ul>
-      <h3 style="margin-top:12px">Crates</h3>
-      <p>Hit one with the ball and the pickup is yours. Every stage deals its
-      own four: two classics that suit the place, and one you'll find nowhere else.</p>
-      ${items}
-      <h3 style="margin-top:12px">Pressure</h3>
-      <p>Past twenty returns the paddles start shrinking and the ball keeps
-      accelerating. No rally lasts forever.</p>
-      <h3 style="margin-top:12px">Stepping away</h3>
-      <p>A notification or an app switch mid-match pauses the game on both phones.
-      It picks up with a countdown when you&rsquo;re back &mdash; but after 30 seconds
-      away, the match is called off. Both phones need an up-to-date game for this.</p>`;
-    fillGlyphs(panel);
-    wrap.appendChild(panel);
+    // One short panel a topic, play first and connecting after; the long
+    // tails (every crate, what happens when things go wrong) sit in folds.
+    const panels = [
+      `<h3>Controls</h3>
+      <p>Slide your thumb anywhere to move. The middle of the paddle sends the ball
+      straight, the edges send it wide. Moving as you hit adds spin.</p>`,
+      `<h3>Your special</h3>
+      <p>Every return fills the strip inside your paddle. When the paddle blinks,
+      <b>tap it</b> to fire. Space does it on a keyboard.</p>
+      <ul style="margin:8px 0 0;padding-left:16px">${chars}</ul>`,
+      `<h3>Crates</h3>
+      <p>Hit one with the ball and the pickup is yours. Each stage deals four:
+      ${crateName(multi)} everywhere, two classics that suit the place and one found
+      nowhere else.</p>
+      <details style="margin-top:4px">
+        <summary><small>Every crate, by stage</small></summary>${items}
+      </details>`,
+      `<h3>Pressure</h3>
+      <p>Past twenty returns the paddles shrink and the ball keeps speeding up.
+      No rally lasts forever.</p>`,
+      `<h3>Connecting</h3>
+      <p><b>Same WiFi:</b> one hosts and shows a code, the other scans it and shows
+      the reply. No camera? Share or paste the codes through any chat app.</p>
+      <p style="margin-top:8px"><b>Online:</b> send an invite through a chat app and paste
+      the reply back. Mobile data often can&rsquo;t link two phones directly: try a WiFi
+      or a hotspot.</p>
+      <details style="margin-top:4px">
+        <summary><small>If something goes wrong</small></summary>
+        <h3 style="margin-top:4px">If the link drops</h3>
+        <p>Both phones go straight back to connecting with your picks kept: one more
+        handshake and you&rsquo;re back in the lobby.</p>
+        <h3 style="margin-top:12px">Stepping away</h3>
+        <p>A notification or an app switch pauses the match on both phones. It picks
+        up with a countdown when you&rsquo;re back; after 30 seconds away it&rsquo;s
+        called off. Both phones need an up-to-date game for this.</p>
+      </details>`,
+    ];
+    for (const html of panels) {
+      const panel = document.createElement('div');
+      panel.className = 'panel';
+      panel.innerHTML = html;
+      fillGlyphs(panel);
+      wrap.appendChild(panel);
+    }
 
     const back = document.createElement('button');
     back.className = 'btn secondary';
@@ -485,8 +548,8 @@ export class Screens {
         <h3>League</h3>
         <small class="muted">${n} match${n === 1 ? '' : 'es'} on this phone</small>
       </div>
-      <p style="margin-top:4px"><small>Not meeting up? Share your league through any chat app —
-        your friends import it and their tables catch up with yours.</small></p>
+      <p style="margin-top:4px"><small>Not meeting up? Share your league through any chat
+        app; your friends import it and their tables catch up.</small></p>
       <div class="row" style="margin-top:8px">
         <button class="btn small secondary" data-action="share-league">Share league</button>
         <button class="btn small secondary" data-action="import-league">Import league</button>
@@ -627,10 +690,9 @@ export class Screens {
         <th>Hero</th><th class="num">W</th><th class="num">L</th>
         <th class="num">Win%</th><th class="num">Pts%</th>
       </tr></thead><tbody>${body}</tbody></table>
-      <p style="margin-top:10px"><small>Pts% is the share of points won. Mirror matches are
-        left out. Rates show from ${lb.HERO_MIN} matches, and a hero is only called strong or
-        weak once the numbers are clear. Between the same friends a hero's record is partly
-        its player's &mdash; tap a hero to split it by player.</small></p>`;
+      <p style="margin-top:10px"><small>Pts% is the share of points won; mirror matches
+        are left out and rates show from ${lb.HERO_MIN} matches. A hero's record is partly
+        its player's: tap one to split it by player.</small></p>`;
   }
 
   standingsHtml() {
@@ -740,21 +802,23 @@ export class Screens {
     // A call alongside is how the players talk — the game has no voice of
     // its own — and it keeps its music down for one.
     panel.innerHTML = online ? `
-      <p>Not on the same WiFi? You swap two codes through any chat app: you send an
-      invite, your friend sends a reply back.</p>
+      <p>Not on the same WiFi? Swap two codes through any chat app: an invite out,
+      a reply back.</p>
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
         <button class="btn" data-action="host">Send an invite</button>
         <button class="btn secondary" data-action="join">I got an invite</button>
       </div>
-      <p style="margin-top:12px"><small><b>Tip:</b> keep your usual WhatsApp or FaceTime
-      call going alongside, so you can talk while you play. Online, the game plays its
-      music quieter for it.</small></p>
-      <p style="margin-top:6px"><small>There&rsquo;s no relay server in between, so some
-      networks &mdash; mobile data especially &mdash; can&rsquo;t connect two phones directly.
-      If yours won&rsquo;t, try a WiFi or a phone hotspot.</small></p>${inAppNote()}` : `
-      <p>Both phones need to be on the <b>same WiFi</b>. One hosts, the other joins.</p>
-      <p style="margin-top:8px"><small>If one of you is on an <b>iPhone</b>, let the
-      Android phone host — the iPhone can then join straight from its Camera app.</small></p>
+      <details style="margin-top:4px">
+        <summary><small>Tips for playing online</small></summary>
+        <p><small>Keep your usual WhatsApp or FaceTime call going alongside to talk
+        while you play; the game turns its music down for it.</small></p>
+        <p style="margin-top:6px"><small>There&rsquo;s no relay server in between, so
+        mobile data often can&rsquo;t link two phones directly. If yours won&rsquo;t,
+        try a WiFi or a phone hotspot.</small></p>
+      </details>${inAppNote()}` : `
+      <p>Both phones on the <b>same WiFi</b>. One hosts, the other joins.</p>
+      <p style="margin-top:8px"><small><b>iPhone?</b> Let the Android phone host; the
+      iPhone joins straight from its Camera app.</small></p>
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
         <button class="btn" data-action="host">Host a match</button>
         <button class="btn secondary" data-action="join">Join a match</button>
