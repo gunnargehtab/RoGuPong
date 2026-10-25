@@ -208,9 +208,11 @@ screen: eight emoji, and eight lines like "GG", "Nice shot!" and "Rematch?"
 that pop up in a speech bubble on the other phone. Never mid-rally.
 
 **Flair** is earned, not bought: a rainbow trail for a 20-hit rally, flames
-for ten wins, starlight for touring all four stages, gold for a shutout. Pick
-yours in the lobby — your paddle wears it and every ball you return carries
-your trail, on both phones.
+for ten wins, starlight for touring all four stages, gold for a shutout. Each
+is the first tier of three. Keep going for a badge on the leaderboard, then an
+upgraded look: PRISM, INFERNO, NOVA and CROWN. Pick yours in the lobby, which
+also shows how close the next tier is. Your paddle wears it and every ball you
+return carries your trail, on both phones.
 
 **Four stages**, each a real place painted in code as a 16-bit scene, with a
 court floor that is the same place seen from above: **Navigli Night** — the

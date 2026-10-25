@@ -616,7 +616,7 @@ export class Screens {
       ${rows.map((r, i) => `
         <tr class="${r.name === me ? 'me' : ''}">
           <td class="rank">${medal(i)}</td>
-          <td><b>${esc(r.name)}</b>${r.topChar ? `<br><small>${esc(charById(r.topChar).name)}</small>` : ''}</td>
+          <td><b>${esc(r.name)}</b>${this.standingsSub(r)}</td>
           <td class="num">${r.won}</td>
           <td class="num">${r.lost}</td>
           <td class="num">${Math.round(r.winRate * 100)}%</td>
@@ -624,6 +624,15 @@ export class Screens {
           <td class="num">${r.bestRally}</td>
         </tr>`).join('')}
       </tbody></table>`;
+  }
+
+  /** Under a Standings name: the favourite hero, then a badge per flair track reached. */
+  standingsSub(r) {
+    const tiers = lb.flairTiers(r.name);
+    const badges = lb.TRACKS.filter((t) => tiers[t.id])
+      .map((t) => `<span style="white-space:nowrap" title="${esc(lb.tierLabel(t, tiers[t.id]))}">${t.icon}${'I'.repeat(tiers[t.id])}</span>`);
+    const parts = [r.topChar ? esc(charById(r.topChar).name) : '', badges.join(' ')].filter(Boolean);
+    return parts.length ? `<br><small>${parts.join(' &middot; ')}</small>` : '';
   }
 
   recentHtml() {
@@ -1290,19 +1299,27 @@ export class Screens {
     if (flairProgress) {
       const flairSel = document.createElement('div');
       flairSel.className = 'panel tight';
-      const locked = lb.FLAIRS.filter((f) => !flairProgress.unlocked[f.id]);
+      // The looks you have to pick from, then one line per track: the tier
+      // reached and what the next one asks.
+      const { tiers, next, unlocked } = flairProgress;
+      const goals = lb.TRACKS.map((t) => {
+        const tier = tiers[t.id];
+        const n = next[t.id];
+        if (!n) return `<small class="muted">${t.icon} ${lb.tierLabel(t, tier)} &mdash; complete</small>`;
+        const look = lb.FLAIRS.find((f) => f.track === t.id && f.tier === n.tier);
+        const step = tier ? `${lb.tierLabel(t, tier)} &rarr; ${'I'.repeat(n.tier)}` : t.name;
+        return `<small class="muted">${tier ? t.icon : '🔒'} ${step}: ${esc(n.goal)}
+          &middot; ${n.have}/${n.need}${look && tier ? ` &middot; unlocks ${esc(look.name)}` : ''}</small>`;
+      });
       flairSel.innerHTML = `
         <div class="title-bar">
           <h3>Flair</h3>
           <small class="muted">earned by playing</small>
         </div>
-        <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${lb.FLAIRS.map((f) => {
-    const open = flairProgress.unlocked[f.id];
-    return `<button class="btn small ${f.id === myFlair ? '' : 'secondary'}"
-              data-action="pick-flair" data-flair="${f.id}" ${open ? '' : 'disabled'}
-              title="${esc(f.hint)}">${open ? '' : '🔒 '}${esc(f.name)}</button>`;
-  }).join('')}</div>
-        ${locked.map((f) => `<small class="muted">🔒 ${esc(f.name)}: ${esc(f.hint)}</small><br>`).join('')}`;
+        <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${lb.FLAIRS.filter((f) => unlocked[f.id]).map((f) => `
+          <button class="btn small ${f.id === myFlair ? '' : 'secondary'}"
+            data-action="pick-flair" data-flair="${f.id}" title="${esc(f.hint)}">${esc(f.name)}</button>`).join('')}</div>
+        ${goals.join('<br>')}`;
       wrap.appendChild(flairSel);
     }
 

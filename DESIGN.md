@@ -903,17 +903,38 @@ where fixing it costs nothing. In the lobby, where it would take leaving and
 reconnecting, both phones warn when either player is nameless or both share a
 name.
 
-**Flair.** Cosmetic unlocks ride the same records. Four looks — RAINBOW (reach
-a 20-hit rally), FLAME (win ten matches), STARLIGHT (play all four stages),
-ROYAL (win without conceding) — are *computed* from the match history every
-time they are asked for, never written down when earned: records stay
-immutable, the merge stays conflict-free, and because histories are shared,
-flair earned on one phone is already earned on the other. The chosen flair
-lives in the profile and rides the `hello`/`pick` messages, so the rival's
-phone renders your look; in play it colours your paddle's trim and the trail
-of any ball you touched last, so a rally visibly trades ownership. There is no
-anti-cheat — a guest claims whatever flair it likes and the host draws it,
-because the threat model is two kids on a sofa.
+**Flair.** Cosmetic unlocks ride the same records. Each look belongs to a
+track of three tiers, and every tier is *computed* from the match history each
+time it is asked for, never written down when earned: records stay immutable,
+the merge stays conflict-free, and because histories are shared, flair earned
+on one phone is already earned on the other.
+
+| Track | I — classic look | II — badge | III — upgraded look |
+| --- | --- | --- | --- |
+| RAINBOW | a 20-hit rally | a 28-hit rally | a 36-hit rally: PRISM |
+| FLAME | 10 wins | 50 wins | 200 wins: INFERNO |
+| STARLIGHT | play four stages | 5 matches on each of four | 25 on each of four: NOVA |
+| ROYAL | a win without conceding | 5 of them | 20 of them: CROWN |
+
+Tier I is the original milestone, so nobody loses a look they had. The middle
+tier is a badge, beside the player's name on the Standings, so the long climb
+to III shows progress on the way. The steps are first guesses, to be
+checked against real histories (Copy history). RAINBOW's steps are short on purpose: past twenty
+returns the rally pressure of §4 is working against the players. STARLIGHT
+counts *four* stages rather than every stage, so a new stage never takes a
+tier back. The counts for every name come from one pass over the history,
+kept until the history changes, since the lobby, the results and the Standings
+all ask. The lobby lists the looks unlocked and, per track, what the next tier
+asks and how close it is. Crossing a tier toasts over the results.
+
+The chosen flair lives in the profile and rides the `hello`/`pick` messages,
+so the rival's phone renders your look; in play it colours your paddle's trim
+and the trail of any ball you touched last, so a rally visibly trades
+ownership. A build that doesn't know a look draws STANDARD in its place
+(`flairById`), so the upgraded looks need no protocol bump; a friend on an
+older build just sees the plain paddle. There is no anti-cheat — a guest
+claims whatever flair it likes and the host draws it, because the threat
+model is two kids on a sofa.
 
 **Known limits, accepted.** The same threat model covers the league: a faked
 record spreads to everyone just as a real one does, and with cloud sync anyone
