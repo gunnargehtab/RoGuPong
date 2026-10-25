@@ -986,13 +986,13 @@ have played each other:
 Every match counts once, whoever won it. The head-to-head already says who is
 ahead; the rank says how much the two have played, so it climbs as fast for
 the friend who keeps losing, and it is the one number on the board that
-belongs to both of them. The lobby shows it under the two names with the head-
-to-head and the next rank, the results carry it as a row, a rank-up toasts,
-and the Standings tab lists your rivals, most-played first. From NEMESES on,
-the pair's quick-chat gets a line of its own, "Not you again!", appended to
-the list like any other line so a build from before it pops a 👋. One name on
-both sides of a record is no rivalry and is left out. Counted in one cached
-pass over the history, like the rest.
+belongs to both of them. The lobby shows it under the two names with the
+head-to-head and the next rank, the results carry it as a row, a rank-up
+toasts, and the Standings tab lists your rivals, most-played first. From
+NEMESES on, the pair's quick-chat gets a line of its own, "Not you again!",
+appended to the list like any other line so a build from before it pops a 👋.
+One name on both sides of a record is no rivalry and is left out. Counted in
+one cached pass over the history, like the rest.
 
 **Known limits, accepted.** The same threat model covers the league: a faked
 record spreads to everyone just as a real one does, and with cloud sync anyone
