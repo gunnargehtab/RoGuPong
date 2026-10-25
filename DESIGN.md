@@ -760,7 +760,11 @@ no internet.
   a portrait screen, which is why the floor carries the theme: canal water,
   marble slabs, courtyard paving, wind-rippled snow. Floors are kept dark and
   low-contrast so the ball and paddles always pop, and mirrored top to bottom
-  so both phones see the same court from their own end. On full graphics each
+  so both phones see the same court from their own end. The goal strips,
+  tinted in each defender's hero colour, are pulled halfway to the floor
+  colour for the same reason: at full strength a strip was as bright as the
+  paddle in front of it, and NEO's pink on the Alpi snowfield had nothing to
+  stand out from. Only the goal line keeps the full colour. On full graphics each
   scene adds a small animation layer — lamp flicker, water shimmer, drifting
   snow — over the still painting. During a match the strips of backdrop behind
   the HUD are darkened in a few flat bands, so the scores read over the daylit

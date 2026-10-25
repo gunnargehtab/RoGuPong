@@ -8,6 +8,7 @@
 import { drawText, measure } from '../ui/pixelfont.js';
 import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, AEGIS_HALF, ballRadius } from './match.js';
 import { itemById } from './items.js';
+import { mix } from './scenes/kit.js';
 
 const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
 const HUD_TOP = 0.08;           // fraction of the safe height
@@ -601,14 +602,20 @@ export class Renderer {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Goal strips, tinted by whoever defends them
+    // Goal strips, tinted by whoever defends them. The tint is the hero's
+    // colour pulled halfway to the floor: at full strength a strip was as
+    // bright as the paddle in front of it, and over a floor of the same hue
+    // (NEO's pink on the Alpi snowfield, BRIO's gold on the Duomo) the paddle
+    // and the ball lost their pop right where the saves happen. The goal
+    // line itself keeps the full colour.
     for (let i = 0; i < 2; i++) {
       const atBottom = (i === view);
       const gy = atBottom ? c.y + c.h - c.h * 0.012 : c.y;
-      ctx.fillStyle = this.grad(`goal:${chars[i].color}:${gy}:${atBottom}`, () => {
+      const tint = mix(chars[i].color, stage.court, 0.5);
+      ctx.fillStyle = this.grad(`goal:${tint}:${gy}:${atBottom}`, () => {
         const grad = ctx.createLinearGradient(0, gy, 0, gy + (atBottom ? -c.h * 0.09 : c.h * 0.09));
-        grad.addColorStop(0, chars[i].color + 'cc');
-        grad.addColorStop(1, chars[i].color + '00');
+        grad.addColorStop(0, tint + 'cc');
+        grad.addColorStop(1, tint + '00');
         return grad;
       });
       ctx.fillRect(c.x, atBottom ? gy - c.h * 0.09 : gy, c.w, c.h * 0.09 + c.h * 0.012);
