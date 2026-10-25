@@ -304,6 +304,7 @@ js/
     cloud.js          optional cloud league sync
   trailer/            the trailer: the cut and its score, the shots, the live match
 cloud/                the optional league-sync Worker, with deploy notes
+.github/ci/           CI's static checks and headless smoke test (not part of the game)
 ```
 
 ---
@@ -318,6 +319,10 @@ cloud/                the optional league-sync Worker, with deploy notes
   never escape the court, speeds stay bounded and every match terminates.
 - **The whole thing** was played end-to-end in two real browsers — host and
   guest, handshake to leaderboard.
+- **CI** checks every pull request: every file parses, every import resolves,
+  the service worker caches exactly what the game loads, and a headless Chrome
+  connects two phones by pasting codes and plays a few seconds of a match.
+  Both scripts are plain Node with no packages — see `CLAUDE.md` to run them.
 - **`window.rogupong`** is the live app object in the console, which is the
   easiest way to poke at a running match.
 
