@@ -347,6 +347,9 @@ summary { padding: 12px 0; cursor: pointer; }
 
 /* The player level's bar: flat, pixel-edged, filling in steps. */
 .xpbar { height: 12px; margin: 6px 0 4px; background: #170c2c; border: 2px solid #3d2a63; }
+/* Hero mastery: up to four stars. */
+.mastery { margin-top: 4px; font-size: 0.7rem; letter-spacing: 0.1em; color: var(--gold); }
+
 /* The top level: a starred gold badge. */
 .lv-top {
   padding: 0 4px; color: #1a0d2b; background: var(--gold);

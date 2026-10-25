@@ -646,6 +646,7 @@ class App {
       names: this.names(),
       chars: m.chars,
       flairs: this.flairs(),
+      masters: this.masters,
       localPaddleX: this.predictX,
       rtt: this.peer ? this.peer.rtt : 0,
       showTouchHint: !this.input.touched && m.phase === 'countdown' && !m.holding,
@@ -760,6 +761,10 @@ class App {
       items: this.stageCrates(this.stage),
       midline: this.sharedProtocol() >= MIDLINE_SINCE,
     });
+    // A hero fully mastered marks its paddle. Both phones hold the same
+    // history, so each works out both players' marks; nothing travels.
+    const names = this.names();
+    this.masters = this.match.chars.map((c, i) => lb.mastery(names[i], c.id).stars >= lb.MASTERY_STEPS.length);
     this.finishing = false;
     this.pendingResult = null;
     this.simAccum = 0;
@@ -841,6 +846,8 @@ class App {
       const before = lb.flairTiers(me);
       const levelBefore = lb.levelProgress(me).level;
       const rankBefore = lb.rivalry(me, them).rank;
+      const hero = rec.players[this.view]?.char;
+      const starsBefore = lb.mastery(me, hero).stars;
       lb.recordMatch(rec);
       const after = lb.flairTiers(me);
       const level = lb.levelProgress(me).level;
@@ -856,6 +863,10 @@ class App {
         for (const f of lb.FLAIRS.filter((x) => x.level && crossed(x.level))) {
           this.screens.toast(`✨ ${f.name} flair unlocked!`, 'good');
         }
+      }
+      const stars = lb.mastery(me, hero).stars;
+      if (stars > starsBefore) {
+        this.screens.toast(`${charById(hero).name} mastery ${lb.starsOf(stars)}`, 'good');
       }
       const rivals = lb.rivalry(me, them);
       if (rivals.rank > rankBefore && rivals.rank > 0) {

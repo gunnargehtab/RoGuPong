@@ -716,7 +716,8 @@ export class Screens {
         const players = [...r.players.values()].sort((a, b) => b.played - a.played || a.name.localeCompare(b.name));
         html += players.length
           ? players.map((p) => `
-            <tr class="split${p.name === me ? ' me' : ''}"><td>${esc(p.name)}</td>${cells(p)}</tr>`).join('')
+            <tr class="split${p.name === me ? ' me' : ''}"><td>${esc(p.name)}
+              <br><small class="mastery">${lb.starsOf(lb.mastery(p.name, r.c.id).stars)}</small></td>${cells(p)}</tr>`).join('')
           : `<tr class="split"><td colspan="5"><small>Nobody has played ${esc(r.c.name)} here yet</small></td></tr>`;
       }
       return html;
@@ -1440,6 +1441,12 @@ export class Screens {
           <span class="track"><span class="fill" style="width:${Math.round(c.paddle / 1.5 * 100)}%"></span></span></div>
         <div class="statbar">SPD
           <span class="track"><span class="fill" style="width:${Math.round(c.speed / 1.4 * 100)}%"></span></span></div>`;
+      const m = lb.mastery(myName || 'YOU', c.id);
+      const stars = document.createElement('div');
+      stars.className = 'mastery';
+      stars.title = m.next ? `${m.xp}/${m.next} XP to the next star` : 'Mastered';
+      stars.textContent = lb.starsOf(m.stars);
+      meta.appendChild(stars);
       cell.appendChild(meta);
       if (c.id === theirChar) {
         const tag = document.createElement('span');
@@ -1450,6 +1457,18 @@ export class Screens {
       grid.appendChild(cell);
     }
     wrap.appendChild(grid);
+
+    // Once a player has a favourite, point at the hero they have played least.
+    const mine = CHARACTERS.map((c) => ({ c, xp: lb.mastery(myName || 'YOU', c.id).xp }));
+    const least = mine.reduce((a, b) => (b.xp < a.xp ? b : a));
+    if (lb.levelProgress(myName || 'YOU').level >= 5 && least.c.id !== myChar
+      && least.xp < Math.max(...mine.map((h) => h.xp)) / 4) {
+      const nudge = document.createElement('p');
+      nudge.className = 'center';
+      nudge.innerHTML = `<small class="muted">Try <b style="color:${least.c.color2}">${esc(least.c.name)}</b>:
+        your least-played hero</small>`;
+      wrap.appendChild(nudge);
+    }
 
     const chosen = charById(myChar);
     const info = document.createElement('div');

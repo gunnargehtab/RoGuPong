@@ -176,7 +176,7 @@ export const fanfareAt = (level) => LEVEL_REWARDS.some((r) => r.fanfare && level
 // history changes.
 let milestoneCache = null;
 
-const noMilestones = () => ({ xp: 0, wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
+const noMilestones = () => ({ xp: 0, wins: 0, bestRally: 0, shutouts: 0, stages: new Map(), heroes: new Map() });
 
 function milestones() {
   if (milestoneCache?.rev === revision) return milestoneCache.byName;
@@ -187,7 +187,9 @@ function milestones() {
       if (!p?.name || (idx === 1 && rec.players[0]?.name === p.name)) return;
       let s = byName.get(p.name);
       if (!s) byName.set(p.name, (s = noMilestones()));
-      s.xp += matchXp(rec, idx);
+      const xp = matchXp(rec, idx);
+      s.xp += xp;
+      if (p.char) s.heroes.set(p.char, (s.heroes.get(p.char) || 0) + xp);
       s.bestRally = Math.max(s.bestRally, rec.bestRally || 0);
       s.stages.set(rec.stage, (s.stages.get(rec.stage) || 0) + 1);
       if (rec.winner === idx) {
@@ -215,6 +217,25 @@ function toward(track, s, step) {
 export function levelProgress(name) {
   return levelFor(milestones().get(name)?.xp || 0);
 }
+
+/**
+ * Hero mastery: the XP a player has earned with each hero, in up to four
+ * stars. It rewards trying the rest of the roster, and the Heroes tab gets
+ * data on every hero for it. Unlike heroStats(), mirror matches count: what
+ * is measured is playing a hero, not how it fares against the others.
+ * About 5, 25, 70 and 140 matches with one hero (DESIGN.md §8).
+ */
+export const MASTERY_STEPS = [100, 500, 1500, 3000];
+
+/** One name's mastery of one hero: { xp, stars: 0..4, next: XP for the next star or null }. */
+export function mastery(name, hero) {
+  const xp = milestones().get(name)?.heroes.get(hero) || 0;
+  const stars = MASTERY_STEPS.filter((n) => xp >= n).length;
+  return { xp, stars, next: MASTERY_STEPS[stars] ?? null };
+}
+
+/** "★★☆☆". */
+export const starsOf = (n) => '★'.repeat(n) + '☆'.repeat(MASTERY_STEPS.length - n);
 
 /** Tier reached on every track by one name: { rainbow: 0..3, … }. */
 export function flairTiers(name) {
