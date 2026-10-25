@@ -83,8 +83,11 @@ const chrome = spawn(findChrome(), [
 let chromeLog = '';
 chrome.stderr.on('data', (d) => { chromeLog += d; });
 
+// A cold Chrome on a CI runner takes the best part of ten seconds to come up.
+let exited = false;
+chrome.on('exit', () => { exited = true; });
 let wsUrl = null;
-for (let i = 0; i < 100 && !wsUrl; i++) {
+for (let i = 0; i < 600 && !wsUrl && !exited; i++) {
   await sleep(100);
   const port = join(profile, 'DevToolsActivePort');
   if (existsSync(port)) {
