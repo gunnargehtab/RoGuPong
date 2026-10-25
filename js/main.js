@@ -843,17 +843,17 @@ class App {
       const after = lb.flairTiers(me);
       const level = lb.levelProgress(me).level;
       if (level > levelBefore) {
-        this.screens.toast(`⬆ Level ${level}!`, 'good');
+        this.screens.toast(`Level ${level}!`, 'good', 'up');
         audio.levelUp();
       }
       const rivals = lb.rivalry(me, them);
       if (rivals.rank > rankBefore && rivals.rank > 0) {
-        this.screens.toast(`⚔️ You and ${them} are now ${rivals.name}`, 'good');
+        this.screens.toast(`You and ${them} are now ${rivals.name}`, 'good', 'swords');
       }
       for (const t of lb.TRACKS) {
         for (let tier = before[t.id] + 1; tier <= after[t.id]; tier++) {
           const f = lb.FLAIRS.find((x) => x.track === t.id && x.tier === tier);
-          this.screens.toast(f ? `✨ ${f.name} flair unlocked!` : `✨ ${lb.tierLabel(t, tier)} reached!`, 'good');
+          this.screens.toast(f ? `${f.name} flair unlocked!` : `${lb.tierLabel(t, tier)} reached!`, 'good', 'spark');
         }
       }
       this.pendingResult = null;
