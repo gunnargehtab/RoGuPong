@@ -14,6 +14,7 @@ import { audio } from './game/audio.js';
 import { Match } from './game/match.js';
 import { byId as charById, BALANCE } from './game/characters.js';
 import { STAGES, stageById } from './game/stages.js';
+import { mix } from './game/scenes/kit.js';
 import { itemById } from './game/items.js';
 import { Peer } from './net/peer.js';
 import { extractCode, inviteLink, unpackSignal, CODE_RE } from './net/sdp.js';
@@ -547,6 +548,18 @@ class App {
     }
   }
 
+  /**
+   * The panels' inner frame line takes the colour of the stage behind them,
+   * so the menus over the Brera courtyard are not the same purple as over
+   * the Navigli. Dimmed toward the panel, as a line rather than a glow.
+   */
+  applyAccent(stage) {
+    this.accentStage = stage;
+    const root = document.documentElement.style;
+    root.setProperty('--accent', stage.accent);
+    root.setProperty('--accent-line', mix(stage.accent, '#1a0d2b', 0.45));
+  }
+
   /** The stage painted behind the current menu screen. */
   menuBackdrop() {
     return MENU_STAGE_SCREENS.has(this.screens.current) ? this.menuStage : this.stage;
@@ -554,7 +567,9 @@ class App {
 
   stepMenu(dt) {
     this.fx.update(dt);
-    this.renderer.drawMenuBackdrop(this.menuBackdrop(), this.menuTime, this.fx);
+    const stage = this.menuBackdrop();
+    if (stage !== this.accentStage) this.applyAccent(stage);
+    this.renderer.drawMenuBackdrop(stage, this.menuTime, this.fx);
     this.screens.tickLogo(this.menuTime);
     this.watchHandshake();
   }

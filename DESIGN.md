@@ -795,6 +795,14 @@ no internet.
   stages, the stage of the day first and the next on each return to the
   title, so all four paintings get seen; the lobby and everything after
   show the stage actually picked.
+- **The panels wear a 16-bit frame**: a dark outline, the white border, a
+  dark gap and an inner line in the colour of the stage behind them, so the
+  menus over the Brera courtyard are not the same purple as over the Navigli
+  — the line is the stage's accent pulled toward the panel, a line rather than
+  a glow. The main buttons (Play, Host, Join, Leaderboard, How to play, Back,
+  Rematch) carry a 12×12 one-colour pixel icon in their text colour, drawn in
+  code like everything else (`js/ui/icons.js`). Buttons press down, tabs dip,
+  and a keyboard player gets a focus ring a thumb never sees.
 - **A match opens on the painting.** In portrait the court covers the
   painting for the whole match, so the countdown is its one moment on
   screen. For the first 1.2 s the stage art has the screen to itself, with

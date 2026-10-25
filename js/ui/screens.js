@@ -19,6 +19,7 @@ import { findLeagueCode } from '../data/league.js';
 import * as cloud from '../data/cloud.js';
 import { isIOS, inAppBrowser } from '../diag.js';
 import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
+import { iconCanvas, ICON_FOR_ACTION } from './icons.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
 // would make old phones pop the wrong one. Eight pixel icons (emotes.js) in
@@ -82,6 +83,23 @@ export function pixelHeadings(root, maxWidth) {
     const c = pixelHeading(h.textContent.trim(), { color, maxWidth });
     if (h.style.marginTop) c.style.marginTop = h.style.marginTop;
     h.replaceWith(c);
+  }
+}
+
+/**
+ * A pixel icon in front of each main button's label — Play, Host, Join,
+ * Leaderboard, How to play, Back, Rematch — matched by data-action and drawn
+ * in the button's own text colour, so a gold button gets a dark glyph and a
+ * purple one a light one.
+ */
+export function buttonIcons(root) {
+  for (const btn of root.querySelectorAll('.btn[data-action]')) {
+    const id = ICON_FOR_ACTION[btn.dataset.action];
+    if (!id || btn.querySelector('.btn-icon')) continue;
+    const label = document.createElement('span');
+    label.append(...btn.childNodes);
+    btn.classList.add('iconed');
+    btn.append(iconCanvas(id, 2, getComputedStyle(btn).color), label);
   }
 }
 
@@ -194,6 +212,7 @@ export class Screens {
     this.root.innerHTML = '';
     this.root.appendChild(build.call(this, data));
     pixelHeadings(this.root, this.headingWidth());
+    buttonIcons(this.root);
   }
 
   /** The widest a panel heading can be: the panel's inside, on this screen. */
