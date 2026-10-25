@@ -214,23 +214,37 @@ class Page {
     throw new Error(`[${this.name}] timed out waiting for ${what}`);
   }
 
-  /** Tap a button with a real touch, so the page gets the user activation a thumb gives it. */
-  async tap(selector, what = selector) {
+  /**
+   * Tap a button with a real touch, so the page gets the user activation a
+   * thumb gives it. A screen can redraw between finding the button and
+   * touching it (the lobby does when the friend's hello lands), so the point
+   * is checked first and, given `until`, the tap is tried again until it
+   * has done what it is for.
+   */
+  async tap(selector, what = selector, until = null) {
     const sel = JSON.stringify(selector);
-    await this.waitFor(`document.querySelector(${sel})?.disabled === false`, `${what} to be tappable`);
-    const { x, y } = await this.eval(`(() => {
-      const el = document.querySelector(${sel});
-      el.scrollIntoView({ block: 'center' });
-      const r = el.getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    })()`);
-    await this.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-    await this.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await sleep(250);   // a few frames of the screen it opened
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await this.waitFor(`document.querySelector(${sel})?.disabled === false`, `${what} to be tappable`);
+      const at = await this.eval(`(() => {
+        const el = document.querySelector(${sel});
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect();
+        const x = r.x + r.width / 2, y = r.y + r.height / 2;
+        return document.elementFromPoint(x, y)?.closest(${sel}) === el ? { x, y } : null;
+      })()`);
+      if (at) {
+        await this.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] });
+        await this.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      await sleep(250);   // a few frames of the screen it opened
+      if (at && !until) return;
+      if (at && await this.waitFor(until, '', 2000).then(() => true, () => false)) return;
+    }
+    throw new Error(`[${this.name}] tapped ${what} three times and it didn't take`);
   }
 
-  async action(name, extra = '') {
-    await this.tap(`[data-action="${name}"]${extra}`, `${name}${extra}`);
+  async action(name, extra = '', until = null) {
+    await this.tap(`[data-action="${name}"]${extra}`, `${name}${extra}`, until);
   }
 
   async paste(text, button) {
@@ -337,11 +351,14 @@ try {
     await host.action('paste-answer');
     await host.paste(reply, 'use-answer');
     for (const p of [host, guest]) await p.waitFor(`rogupong.screens.current === 'lobby'`, 'the lobby');
+    // Each lobby redraws once the friend's hello lands; settle before tapping.
+    for (const p of [host, guest]) await p.waitFor(`rogupong.theirProtocol != null`, "the friend's hello");
   });
 
   await step('a match starts and plays on both phones', async () => {
-    await guest.action('ready');
-    await host.action('start');
+    await guest.action('ready', '', `rogupong.myReady`);
+    await host.waitFor(`rogupong.theirReady`, "the guest's Ready to reach the host");
+    await host.action('start', '', `rogupong.mode === 'match'`);
     for (const p of [host, guest]) await p.waitFor(`rogupong.mode === 'match' && rogupong.match`, 'the match');
     // Past the countdown and well into a rally.
     await sleep(6000);
