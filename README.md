@@ -214,6 +214,12 @@ upgraded look: PRISM, INFERNO, NOVA and CROWN. Pick yours in the lobby, which
 also shows how close the next tier is. Your paddle wears it and every ball you
 return carries your trail, on both phones.
 
+**Levels** go up with every match you play, and most of the XP is for
+playing: a loss earns more than half of what a win does. Your level shows on
+the title screen, both levels in the lobby and everyone's on the leaderboard;
+the results screen shows what the match earned. Like flair, it is worked out
+from the shared match history, so it's the same on every phone.
+
 **Four stages**, each a real place painted in code as a 16-bit scene, with a
 court floor that is the same place seen from above: **Navigli Night** — the
 canal at blue hour, lamplight streaking the water, terraces three deep;

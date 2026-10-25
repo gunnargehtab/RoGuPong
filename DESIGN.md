@@ -936,6 +936,37 @@ older build just sees the plain paddle. There is no anti-cheat — a guest
 claims whatever flair it likes and the host draws it, because the threat
 model is two kids on a sofa.
 
+**Levels.** Every player also has a level, from 1 to 30, computed from the
+same records the same way: never stored, the same on every phone that holds
+the history, and won back from friends or the cloud league if a phone is
+cleared. A match earns
+
+| | XP |
+| --- | --- |
+| Playing it | 10 |
+| Points scored, against the target | up to 10 |
+| Winning it | 6 |
+| Its longest rally, one per six hits | up to 5 |
+
+so a loss earns 10–24 and a win 26–31. The weighting is the point: between
+two friends the one who keeps losing is the one who stops playing, and a
+level that only grew with wins would widen the gap the leaderboard already
+shows. Points are counted as a share of the target, so a first-to-3 is worth
+about what a first-to-11 is; a long rally is both players' doing and pays
+both.
+
+Level *n* → *n* + 1 costs 50 × *n* XP: level 2 within a few matches,
+level 10 after about a hundred, the cap after about a thousand. The cap is
+there for `MAX_RECORDS`: past 3000 records the oldest are trimmed, and a
+level that kept climbing with lifetime totals would start to fall. A player
+would need a thousand matches inside the kept window before trimming could
+cost them a level. XP is worked out in the same cached pass as the flair
+tiers. The title shows your level under your name (a new name shows its
+own), the lobby shows both players', the Standings every player's, and the
+results screen what the match earned, with the bar filling from where the
+match found you. A level-up toasts and plays a short arpeggio. The numbers
+are first guesses, like the flair steps.
+
 **Known limits, accepted.** The same threat model covers the league: a faked
 record spreads to everyone just as a real one does, and with cloud sync anyone
 holding the key can add one without connecting. Clear only empties this phone.
