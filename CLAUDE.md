@@ -16,11 +16,21 @@ The project's one server is optional: a Cloudflare Worker in `cloud/` that syncs
 python3 -m http.server 8137     # any static server works
 ```
 
-Open `http://localhost:8137`. There are no tests, linters or build commands in the repo — verification is playing it. Camera access (QR scanning) requires HTTPS or `localhost`; over plain http on a phone, use the copy-and-paste code fallback that every connect screen offers.
+Open `http://localhost:8137`. There is no build and no linter, and verification is mostly playing it. Camera access (QR scanning) requires HTTPS or `localhost`; over plain http on a phone, use the copy-and-paste code fallback that every connect screen offers.
 
 `window.rogupong` is the live `App` instance in the console — the easiest way to poke at a running match (e.g. `rogupong.match`, `rogupong.peer`).
 
 Deployment is GitHub Pages serving straight from `main`; every push to `main` republishes.
+
+**CI** (`.github/workflows/ci.yml`) runs two zero-dependency Node scripts on every pull request and push to `main`; run them locally before pushing (Node 22+, and for the smoke test a Chrome, `CHROME=<path>` if it isn't on the PATH):
+
+```sh
+node --experimental-vm-modules --no-warnings .github/ci/check.mjs
+node .github/ci/smoke.mjs
+```
+
+- `check.mjs` parses every JS file without running it, links the import graphs of `js/main.js` and `js/trailer/trailer.js` (every imported file exists and exports every imported name), and requires `ASSETS` in `sw.js` to be exactly what `index.html` loads. Plain `node --check` is no substitute: Node 22 lets an unparseable file through when it has `import`/`export` in it.
+- `smoke.mjs` serves the repo and drives headless Chrome over the DevTools protocol, as two phones in separate browser contexts: the title screen, the service worker's cache, the menus, a paste-code handshake to the lobby, six seconds of a match on both phones, then every trailer shot and its free-play demo. Any uncaught exception, `console.error` or failed load fails it, and a failure prints each phone's `App.diagnostics()` report. It taps by `data-action` and fills `#paste-input`, so renaming those, or changing the handshake's steps, means updating it too.
 
 ## Architecture
 
@@ -53,7 +63,7 @@ Anything that must not be lost goes on `ctl`; anything superseded by the next pa
 
 ## Things to know when editing
 
-- **`sw.js` precache list**: every file the game loads must be listed in `ASSETS`, so adding or renaming a JS/CSS file means updating `sw.js` too. Fetch is network-first with cache fallback, so redeploys are picked up automatically.
+- **`sw.js` precache list**: every file the game loads must be listed in `ASSETS`, so adding or renaming a JS/CSS file means updating `sw.js` too (CI's `check.mjs` fails until it matches). Fetch is network-first with cache fallback, so redeploys are picked up automatically.
 - **DESIGN.md is the source of truth for tuning.** Every physics constant (paddle speed 2.35, speed ramp ×1.035, rally-pressure shrink, meter rates…) was deliberately balanced — the file explains why each number is what it is. Read the relevant section before changing gameplay values, and keep the doc in sync with the code.
 - **`PROTOCOL` in `main.js`** is what this build speaks, exchanged in `hello`. Bump it whenever a change needs both phones on the same build to look right (new snapshot fields a guest must draw, new crates), and tag new crates with `since: <that number>` in `items.js` — a match against an older build leaves them out of the pool (`App.stageCrates`), and the lobby tells the players which phone to update.
 - **`BALANCE` in `characters.js`** is the roster's balance version, saved in every match record so the Heroes tab can show win rates since the last patch. Bump it with any change that could shift who wins — a hero's numbers, or how a special plays out in `match.js` — usually alongside the `PROTOCOL` bump such a change needs, and note it in DESIGN.md §3.
