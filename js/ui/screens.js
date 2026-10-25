@@ -20,6 +20,7 @@ import * as cloud from '../data/cloud.js';
 import { isIOS, inAppBrowser } from '../diag.js';
 import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
 import { iconCanvas, ICON_FOR_ACTION } from './icons.js';
+import { badgeCanvas } from './badges.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
 // would make old phones pop the wrong one. Eight pixel icons (emotes.js) in
@@ -94,7 +95,8 @@ export function pixelHeadings(root, maxWidth) {
  */
 export function buttonIcons(root) {
   for (const btn of root.querySelectorAll('.btn[data-action]')) {
-    const id = ICON_FOR_ACTION[btn.dataset.action];
+    // A button can name its own icon; the ready button shows a check once pressed.
+    const id = btn.dataset.icon || ICON_FOR_ACTION[btn.dataset.action];
     if (!id || btn.querySelector('.btn-icon')) continue;
     const label = document.createElement('span');
     label.append(...btn.childNodes);
@@ -102,6 +104,12 @@ export function buttonIcons(root) {
     btn.append(iconCanvas(id, 2, getComputedStyle(btn).color), label);
   }
 }
+
+/** Every `<i data-badge="id">` under `root` becomes that badge's pixel glyph, in line. */
+export function fillBadges(root) {
+  for (const slot of root.querySelectorAll('i[data-badge]')) slot.replaceWith(badgeCanvas(slot.dataset.badge, 1));
+}
+const badge = (id) => `<i data-badge="${id}"></i>`;
 
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {
@@ -213,6 +221,7 @@ export class Screens {
     this.root.appendChild(build.call(this, data));
     pixelHeadings(this.root, this.headingWidth());
     buttonIcons(this.root);
+    fillBadges(this.root);
   }
 
   /** The widest a panel heading can be: the panel's inside, on this screen. */
@@ -245,10 +254,12 @@ export class Screens {
     this.app.handleAction(el.dataset.action, el.dataset, el);
   }
 
-  toast(message, kind = '') {
+  toast(message, kind = '', badgeId = null) {
     const el = document.createElement('div');
     el.className = 'toast ' + kind;
     el.textContent = message;
+    // A pixel badge in front of the news — a level up, a rivalry, a flair.
+    if (badgeId) el.prepend(badgeCanvas(badgeId, 1), ' ');
     this.toastHost.appendChild(el);
     setTimeout(() => {
       el.style.transition = 'opacity .3s';
@@ -754,8 +765,8 @@ export class Screens {
   /** "⚔️ ARCH RIVALS · 34 matches · 18–16 · NEMESES at 75", from my side. */
   rivalryHtml(them) {
     const r = lb.rivalry(this.profile.name || 'YOU', them);
-    if (r.rank < 0) return '<span class="muted">⚔️ Your first match together</span>';
-    return `⚔️ <b class="warn">${r.name}</b>
+    if (r.rank < 0) return `<span class="muted">${badge('swords')} Your first match together</span>`;
+    return `${badge('swords')} <b class="warn">${r.name}</b>
       <span class="muted">&middot; ${r.played} match${r.played === 1 ? '' : 'es'} &middot; ${r.won}&ndash;${r.lost}${
   r.next ? ` &middot; ${r.next.name} at ${r.next.at}` : ''}</span>`;
   }
@@ -764,7 +775,7 @@ export class Screens {
   standingsSub(r) {
     const tiers = lb.flairTiers(r.name);
     const badges = lb.TRACKS.filter((t) => tiers[t.id])
-      .map((t) => `<span style="white-space:nowrap" title="${esc(lb.tierLabel(t, tiers[t.id]))}">${t.icon}${'I'.repeat(tiers[t.id])}</span>`);
+      .map((t) => `<span style="white-space:nowrap" title="${esc(lb.tierLabel(t, tiers[t.id]))}">${badge(t.badge)}${'I'.repeat(tiers[t.id])}</span>`);
     const parts = [r.topChar ? esc(charById(r.topChar).name) : '', badges.join(' ')].filter(Boolean);
     return parts.length ? `<br><small>${parts.join(' &middot; ')}</small>` : '';
   }
@@ -1444,10 +1455,10 @@ export class Screens {
       const goals = lb.TRACKS.map((t) => {
         const tier = tiers[t.id];
         const n = next[t.id];
-        if (!n) return `<small class="muted">${t.icon} ${lb.tierLabel(t, tier)} &mdash; complete</small>`;
+        if (!n) return `<small class="muted">${badge(t.badge)} ${lb.tierLabel(t, tier)} &mdash; complete</small>`;
         const look = lb.FLAIRS.find((f) => f.track === t.id && f.tier === n.tier);
         const step = tier ? `${lb.tierLabel(t, tier)} &rarr; ${'I'.repeat(n.tier)}` : t.name;
-        return `<small class="muted">${tier ? t.icon : '🔒'} ${step}: ${esc(n.goal)}
+        return `<small class="muted">${badge(tier ? t.badge : 'lock')} ${step}: ${esc(n.goal)}
           &middot; ${n.have}/${n.need}${look && tier ? ` &middot; unlocks ${esc(look.name)}` : ''}</small>`;
       });
       flairSel.innerHTML = `
@@ -1483,8 +1494,8 @@ export class Screens {
         <button class="btn small secondary" data-action="cycle-target">First to ${target}</button>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="btn small ${party ? '' : 'secondary'}" data-action="cycle-party">${party ? '🎉 Party mode' : 'Classic mode'}</button>
-      </div>` : `<small class="muted">First to ${target}${party ? ' · 🎉 PARTY MODE' : ''}</small>`}`;
+        <button class="btn small ${party ? '' : 'secondary'}" data-action="cycle-party">${party ? `${badge('party')} Party mode` : 'Classic mode'}</button>
+      </div>` : `<small class="muted">First to ${target}${party ? ` · ${badge('party')} PARTY MODE` : ''}</small>`}`;
     fillGlyphs(stageSel);
     wrap.appendChild(stageSel);
 
@@ -1501,7 +1512,7 @@ export class Screens {
         <button class="btn secondary" data-action="leave">Leave</button>`;
     } else {
       go.innerHTML = `
-        <button class="btn" data-action="ready">${myReady ? 'Ready ✓' : 'I am ready'}</button>
+        <button class="btn" data-action="ready"${myReady ? ' data-icon="check"' : ''}>${myReady ? 'Ready' : 'I am ready'}</button>
         <button class="btn secondary" data-action="leave">Leave</button>`;
     }
     wrap.appendChild(go);

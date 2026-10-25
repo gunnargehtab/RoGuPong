@@ -358,6 +358,8 @@ summary { padding: 12px 0; cursor: pointer; }
 /* The icons are canvases (emotes.js); a button is as tall as a line of emoji was. */
 .emotes button { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 4px 0; }
 .emotes canvas, #emote-pop canvas { display: block; }
+/* A badge in a line of text: the flair marks, the padlock, the rivalry's swords. */
+.badge { display: inline-block; vertical-align: -2px; margin-right: 3px; }
 /* Quick-chat lines wrap as chips, as many to a row as fit. */
 .quick { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick button {

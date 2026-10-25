@@ -18,6 +18,7 @@ const ASSETS = [
   'js/ui/screens.js',
   'js/ui/emotes.js',
   'js/ui/icons.js',
+  'js/ui/badges.js',
   'js/net/qr.js',
   'js/net/sdp.js',
   'js/net/peer.js',

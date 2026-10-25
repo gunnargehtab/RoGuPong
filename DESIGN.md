@@ -746,6 +746,11 @@ no internet.
   one set of glyphs in the game that came from outside it: smooth-edged, and
   a different drawing on every phone. The eight still mean what the emoji
   did, so a phone on an older build pops the matching emoji for the same index.
+  The flair badges on the standings and in the lobby, the padlock of a tier
+  not yet reached, the rivalry's crossed swords, the party popper, the ready
+  button's check and the badges on the level-up, rivalry and flair toasts are
+  pixel glyphs too (`badges.js`, `icons.js`): nothing in the menus comes from
+  the phone's emoji font any more.
 - **All in-game text** uses a 62-glyph 5×7 bitmap font defined in this repo, so
   the game looks identical on every handset. Outlines are drawn thinner than
   one font pixel, because a full-pixel outline swallows the counters of glyphs

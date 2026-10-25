@@ -173,19 +173,35 @@ export function drawEmote(ctx, id, x, y, px) {
   }
 }
 
-/** A canvas element showing emote `id`, `px` CSS pixels a pixel, crisp on any screen. */
-export function emoteCanvas(id, px) {
+/**
+ * A canvas element showing `rows` of pixel art in `colors`, `px` CSS pixels
+ * a pixel, crisp on any screen. The emotes, and the badges in badges.js.
+ */
+export function artCanvas(rows, colors, px, className) {
   const dpr = Math.max(1, Math.min(3, Math.round(window.devicePixelRatio || 1)));
-  const size = EMOTE_SIZE * px;
+  const w = rows[0].length * px;
+  const h = rows.length * px;
   const canvas = document.createElement('canvas');
-  canvas.width = size * dpr;
-  canvas.height = size * dpr;
-  canvas.style.width = size + 'px';
-  canvas.style.height = size + 'px';
-  canvas.className = 'emote';
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.className = className;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  drawEmote(ctx, id, 0, 0, px);
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      const color = colors[rows[r][c]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(c * px, r * px, px, px);
+    }
+  }
   return canvas;
+}
+
+/** A canvas element showing emote `id`, `px` CSS pixels a pixel. */
+export function emoteCanvas(id, px) {
+  return artCanvas(ART[id] || ART.wave, COLORS, px, 'emote');
 }

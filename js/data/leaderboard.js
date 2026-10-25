@@ -76,16 +76,17 @@ const announce = (ids, from) => { for (const fn of arrivals) fn(ids, from); };
  *
  * Each look belongs to a track of three tiers. Tier I unlocks the classic
  * look, tier II is a badge, tier III an upgraded look. The steps are what a
- * player's history has to show for each tier (DESIGN.md §8).
+ * player's history has to show for each tier (DESIGN.md §8). `badge` names
+ * the track's pixel glyph in js/ui/badges.js.
  */
 export const TRACKS = [
-  { id: 'rainbow', name: 'RAINBOW', icon: '🌈', steps: [20, 28, 36],
+  { id: 'rainbow', name: 'RAINBOW', badge: 'rainbow', steps: [20, 28, 36],
     goal: (n) => `Reach a ${n}-hit rally` },
-  { id: 'flame', name: 'FLAME', icon: '🔥', steps: [10, 50, 200],
+  { id: 'flame', name: 'FLAME', badge: 'flame', steps: [10, 50, 200],
     goal: (n) => `Win ${n} matches` },
-  { id: 'star', name: 'STARLIGHT', icon: '⭐', steps: [1, 5, 25],
+  { id: 'star', name: 'STARLIGHT', badge: 'star', steps: [1, 5, 25],
     goal: (n) => (n === 1 ? 'Play on four stages' : `Play ${n} matches on each of four stages`) },
-  { id: 'royal', name: 'ROYAL', icon: '👑', steps: [1, 5, 20],
+  { id: 'royal', name: 'ROYAL', badge: 'crown', steps: [1, 5, 20],
     goal: (n) => (n === 1 ? 'Win a match without conceding a point' : `Win ${n} matches without conceding a point`) },
 ];
 
