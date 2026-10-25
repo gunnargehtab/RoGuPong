@@ -801,14 +801,20 @@ class App {
       // record lands — worth announcing over the results screen. A tier with
       // a look of its own announces the look.
       const me = this.profile.name || 'YOU';
+      const them = rec.players[1 - this.view]?.name;
       const before = lb.flairTiers(me);
       const levelBefore = lb.levelProgress(me).level;
+      const rankBefore = lb.rivalry(me, them).rank;
       lb.recordMatch(rec);
       const after = lb.flairTiers(me);
       const level = lb.levelProgress(me).level;
       if (level > levelBefore) {
         this.screens.toast(`⬆ Level ${level}!`, 'good');
         audio.levelUp();
+      }
+      const rivals = lb.rivalry(me, them);
+      if (rivals.rank > rankBefore && rivals.rank > 0) {
+        this.screens.toast(`⚔️ You and ${them} are now ${rivals.name}`, 'good');
       }
       for (const t of lb.TRACKS) {
         for (let tier = before[t.id] + 1; tier <= after[t.id]; tier++) {
