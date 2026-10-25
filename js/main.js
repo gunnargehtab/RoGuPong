@@ -812,7 +812,9 @@ class App {
     const m = this.match;
     const isHost = !this.peer || this.peer.isHost;
     audio.stopMusic();
-    if (m.winner === this.view) audio.victory(); else audio.defeat();
+    // From level 20 a win plays the long fanfare (DESIGN.md §8).
+    if (m.winner === this.view) audio.victory(lb.fanfareAt(lb.levelProgress(this.profile.name || 'YOU').level));
+    else audio.defeat();
 
     // Send the record straight away rather than after the celebration, so the
     // guest is never left waiting on a message that has not been sent yet.
@@ -845,6 +847,15 @@ class App {
       if (level > levelBefore) {
         this.screens.toast(`Level ${level}!`, 'good', 'up');
         audio.levelUp();
+        // What the levels crossed bring with them.
+        const crossed = (at) => at > levelBefore && at <= level;
+        for (const r of lb.LEVEL_REWARDS.filter((x) => crossed(x.level))) {
+          this.screens.toast(`🏅 New title: ${r.title}`, 'good');
+          if (r.fanfare) this.screens.toast('🎺 Victory fanfare unlocked!', 'good');
+        }
+        for (const f of lb.FLAIRS.filter((x) => x.level && crossed(x.level))) {
+          this.screens.toast(`✨ ${f.name} flair unlocked!`, 'good');
+        }
       }
       const rivals = lb.rivalry(me, them);
       if (rivals.rank > rankBefore && rivals.rank > 0) {

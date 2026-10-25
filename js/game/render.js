@@ -90,6 +90,9 @@ const subScale = (s) => Math.max(1, s - 1);
 const meterHeight = (s) => Math.max(5, Math.round(s * 2.2));
 const streakScale = (s) => Math.max(1, Math.round(s / 3));
 
+// The COMET flair's trail, tail to ball.
+const COMET = ['#5b3fd1', '#7a6bff', '#7fd8ff', '#d9f6ff'];
+
 // The INFERNO flair's trail, tail to ball.
 const INFERNO = ['#a51231', '#e8402a', '#ff7a3d', '#ffd166', '#fff3c4'];
 
@@ -966,6 +969,11 @@ export class Renderer {
         color = i % 4 === 0 ? '#fff3c4' : '#ffd93b';
         alpha = f * 0.55;
         size = 1.1;
+      } else if (flair === 'comet') {
+        // Level 10's look: an icy head and a violet tail that tapers away.
+        color = COMET[Math.min(COMET.length - 1, Math.floor(f * COMET.length))];
+        alpha = f * 0.65;
+        size = 0.6 + f * 0.7;
       }
       ctx.globalAlpha = alpha * fade;
       ctx.fillStyle = color;
@@ -1138,6 +1146,24 @@ export class Renderer {
         }
         ctx.fillStyle = blinkOn(time * 0.25) ? '#ff3d5a' : '#ffd0d8';
         ctx.fillRect(sx - 2, courtY + (outward < 0 ? -9 : 5), 5, 4);
+      } else if (flair === 'comet') {
+        // A streak of light sweeping the face, an icy rim on the court side,
+        // and a little comet of its own crossing above it.
+        const gx = sx - w / 2 + h * 0.4 + ((time * 0.8) % 1) * (w - h * 0.8);
+        ctx.fillStyle = '#d9f6ff';
+        for (const [dx, a] of [[-6, 0.2], [-4, 0.45], [-2, 0.9], [0, 0.45]]) {
+          ctx.globalAlpha = a;
+          ctx.fillRect(gx + dx, sy - h * 0.3, 2, h * 0.6);
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#7fd8ff';
+        ctx.fillRect(sx - w / 2 + h * 0.3, courtY + (outward < 0 ? -2 : 0), w - h * 0.6, 2);
+        const cx = sx - w / 2 + ((time * 0.5 + 0.5) % 1) * w;
+        const cy = courtY + outward * 10;
+        for (const [k, c, n] of [[0, '#ffffff', 4], [1, '#7fd8ff', 3], [2, '#7a6bff', 2]]) {
+          ctx.fillStyle = c;
+          ctx.fillRect(cx - k * 5 - n / 2, cy - n / 2, n, n);
+        }
       }
 
       if (p.grow > 0) {

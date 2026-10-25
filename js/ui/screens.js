@@ -366,12 +366,19 @@ export class Screens {
     return input;
   }
 
-  /** "LV 12", the XP into the level and a bar toward the next; `fill` overrides the bar's width. */
+  /** "LV 12", gold and starred at the top level. */
+  lvTag(level) {
+    return level >= lb.LEVEL_CAP ? `<span class="lv-top">★&nbsp;LV&nbsp;${level}</span>`
+      : `<span class="warn">LV&nbsp;${level}</span>`;
+  }
+
+  /** "LV 12 · ACE", the XP into the level and a bar toward the next; `fill` overrides the bar's width. */
   levelHtml(p, { title = '', fill = null } = {}) {
     const pct = p.need ? Math.round((100 * p.into) / p.need) : 100;
+    const rank = lb.titleFor(p.level);
     return `
       <div class="title-bar">
-        <b class="warn">${title}LV ${p.level}</b>
+        <b class="warn">${title}${this.lvTag(p.level)}${rank ? ` &middot; ${rank}` : ''}</b>
         <small class="muted">${p.need ? `${p.into}/${p.need} XP` : 'top level'}</small>
       </div>
       <div class="xpbar"><i data-to="${pct}" style="width:${fill ?? pct}%"></i></div>`;
@@ -738,7 +745,7 @@ export class Screens {
       ${rows.map((r, i) => `
         <tr class="${r.name === me ? 'me' : ''}">
           <td class="rank">${medal(i)}</td>
-          <td><b>${esc(r.name)}</b> <small class="warn">LV&nbsp;${lb.levelProgress(r.name).level}</small>${this.standingsSub(r)}</td>
+          <td><b>${esc(r.name)}</b> <small>${this.lvTag(lb.levelProgress(r.name).level)}</small>${this.standingsSub(r)}</td>
           <td class="num">${r.won}</td>
           <td class="num">${r.lost}</td>
           <td class="num">${Math.round(r.winRate * 100)}%</td>
@@ -760,6 +767,13 @@ export class Screens {
           <td class="num"><small class="muted">${r.next ? `${r.next.name}<br>at ${r.next.at}` : 'top rank'}</small></td>
         </tr>`).join('')}
       </tbody></table>`;
+  }
+
+  /** Under a lobby name: "LV 12 · ACE". */
+  levelLine(name) {
+    const { level } = lb.levelProgress(name);
+    const rank = lb.titleFor(level);
+    return `<small>${this.lvTag(level)}${rank ? ` <span class="muted">${rank}</span>` : ''}</small>`;
   }
 
   /** "⚔️ ARCH RIVALS · 34 matches · 18–16 · NEMESES at 75", from my side. */
@@ -1326,13 +1340,13 @@ export class Screens {
     const versus = document.createElement('div');
     versus.className = 'panel tight';
     versus.innerHTML = `
-      <div class="status" style="justify-content:space-between">
+      <div class="status" style="justify-content:space-between;align-items:flex-start">
         <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}
-          <span class="warn">LV&nbsp;${lb.levelProgress(this.profile.name || 'YOU').level}</span></span>
+          <br>${this.levelLine(this.profile.name || 'YOU')}</span>
         <span class="${laggy ? 'warn' : 'muted'}" id="lobby-rtt">${rtt ? rtt + 'ms' : 'linked'}</span>
-        <span>${esc(theirName || 'FRIEND')}
-          <span class="warn">LV&nbsp;${lb.levelProgress(theirName || 'FRIEND').level}</span>${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
-          class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
+        <span style="text-align:right">${esc(theirName || 'FRIEND')}${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
+          class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span>
+          <br>${this.levelLine(theirName || 'FRIEND')}</span>
       </div>
       <div class="center" style="margin-top:8px"><small>${this.rivalryHtml(theirName || 'FRIEND')}</small></div>`;
     wrap.appendChild(versus);
@@ -1461,6 +1475,10 @@ export class Screens {
         return `<small class="muted">${badge(tier ? t.badge : 'lock')} ${step}: ${esc(n.goal)}
           &middot; ${n.have}/${n.need}${look && tier ? ` &middot; unlocks ${esc(look.name)}` : ''}</small>`;
       });
+      // Looks a level unlocks, while they are still to come.
+      for (const f of lb.FLAIRS.filter((x) => x.level && !unlocked[x.id])) {
+        goals.push(`<small class="muted">🔒 ${esc(f.name)}: ${esc(f.hint)} &middot; LV ${flairProgress.level}/${f.level}</small>`);
+      }
       flairSel.innerHTML = `
         <div class="title-bar">
           <h3>Flair</h3>

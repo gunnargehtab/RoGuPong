@@ -113,6 +113,7 @@ export const FLAIRS = [
   look('inferno', 'INFERNO', 'flame', 3),
   look('nova', 'NOVA', 'star', 3),
   look('crown', 'CROWN', 'royal', 3),
+  { id: 'comet', name: 'COMET', level: 10, hint: 'Reach level 10' },
 ];
 
 export const flairById = (id) => FLAIRS.find((f) => f.id === id) || FLAIRS[0];
@@ -148,6 +149,27 @@ export function levelFor(xp) {
   }
   return { xp, level, into: xp - floor, need: level < LEVEL_CAP ? levelCost(level) : 0 };
 }
+
+/**
+ * What a level brings, every five levels: a title, and at 20 the long
+ * victory fanfare. A flair with a `level` (COMET) unlocks there too. Like
+ * everything else here it is computed from the level, never stored
+ * (DESIGN.md §8).
+ */
+export const LEVEL_REWARDS = [
+  { level: 5, title: 'ROOKIE' },
+  { level: 10, title: 'CONTENDER' },
+  { level: 15, title: 'ACE' },
+  { level: 20, title: 'VETERAN', fanfare: true },
+  { level: 25, title: 'CHAMPION' },
+  { level: 30, title: 'MASTER' },
+];
+
+/** The title a level carries, or '' below the first. */
+export const titleFor = (level) => LEVEL_REWARDS.filter((r) => level >= r.level).pop()?.title || '';
+
+/** Whether a level plays the long victory fanfare. */
+export const fanfareAt = (level) => LEVEL_REWARDS.some((r) => r.fanfare && level >= r.level);
 
 // Every player's milestone counts and XP, from one pass over the history. The
 // lobby, the results and the Standings all ask, so it is kept until the
@@ -223,13 +245,15 @@ export function flairProgress(profile) {
     const [have, need] = toward(t, s, t.steps[tier - 1]);
     next[t.id] = { tier, have, need, goal: t.goal(t.steps[tier - 1]) };
   }
+  const level = levelFor(s.xp).level;
   const unlocked = {};
-  for (const f of FLAIRS) unlocked[f.id] = !f.track || tiers[f.track] >= f.tier;
+  for (const f of FLAIRS) unlocked[f.id] = f.level ? level >= f.level : !f.track || tiers[f.track] >= f.tier;
   return {
     stats: { wins: s.wins, bestRally: s.bestRally, stages: s.stages.size, shutouts: s.shutouts },
     tiers,
     next,
     unlocked,
+    level,
   };
 }
 

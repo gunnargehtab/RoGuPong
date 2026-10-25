@@ -202,9 +202,17 @@ export class Audio {
   menu() { this.tone(720, 0.045, 'square', 0.12); }
   back() { this.tone(320, 0.07, 'square', 0.12); }
 
-  victory() {
+  /** The win jingle; `fanfare`, from level 20, runs it on into a held top note over a bass. */
+  victory(fanfare = false) {
     [0, 4, 7, 12, 16, 19].forEach((n, i) => {
       setTimeout(() => this.tone(NOTE(9 + n) * 2, 0.16, 'square', 0.18), i * 95);
+    });
+    if (!fanfare) return;
+    [[12, 0.12], [16, 0.12], [19, 0.12], [24, 0.6]].forEach(([n, dur], i) => {
+      setTimeout(() => {
+        this.tone(NOTE(9 + n) * 2, dur, 'square', 0.18);
+        this.tone(NOTE(9 + n - 24), dur, 'triangle', 0.2);
+      }, 660 + i * 120);
     });
   }
 
