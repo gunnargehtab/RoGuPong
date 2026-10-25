@@ -1012,17 +1012,42 @@ results screen what the match earned, with the bar filling from where the
 match found you. A level-up toasts and plays a short arpeggio. The numbers
 are first guesses, like the flair steps.
 
-Every five levels bring a reward (`LEVEL_REWARDS`), so there is always one
-in sight. Each brings a title: ROOKIE at 5, then CONTENDER, ACE, VETERAN,
+Every five levels bring a reward (`LEVEL_REWARDS`), so there is always one in
+sight. Each brings a title: ROOKIE at 5, then CONTENDER, ACE, VETERAN,
 CHAMPION and MASTER at the cap. The lobby shows it under both names and the
-title screen next to your level. Level 10 also unlocks the COMET flair: an
-icy trail, and a glint that sweeps the paddle. It rides `pick` like every
-flair, so an older build draws STANDARD in its place. Level 20 turns your
-victory jingle into a longer fanfare, on your own phone. Level 30 turns the
+title screen next to your level. Level 10 also unlocks the COMET flair: an icy
+trail, and a glint that sweeps the paddle. It rides `pick` like every flair,
+so an older build draws STANDARD in its place. Level 15 lets a host play a
+stage by night, level 20 turns your victory jingle into a longer fanfare on
+your own phone, level 25 unlocks the CHROME paddle, and level 30 turns the
 level into a starred gold badge wherever it shows. Like the levels, every
-reward is worked out from the level when it is asked for, never written down.
-Crossing a reward level toasts what it brought. All of them are cosmetic:
-nothing a level brings touches play.
+reward is worked out from the level when it is asked for, never written down;
+only the choices (a flair, CHROME on or off) live in the profile. Crossing a
+reward level toasts what it brought. All of them are cosmetic: nothing a level
+brings touches play.
+
+**Night stages** are the day stages repainted: the scene paints as usual, then
+one pass over its art-pixel canvas maps every colour to its night colour
+(`kit.toNight`). The brightest stay lit (lamps, lit windows, the sun's disc,
+which becomes the moon); the rest turns to moonlight, darker, bluer and
+greyer, keeping its brightness order so the painting still reads. A map from
+colour to colour keeps flat colours flat and a mirrored floor mirrored, and it
+darkens the court further, so the rules for a court floor hold by night too.
+It runs once, when the renderer caches the art, keyed apart from the day's
+(`stage.variant`). The scenes' animation layers are left out by night: they
+were painted for daylight and would light it back up. A night stage keeps its
+day stage's id, so records, crates and the STARLIGHT tour count it as the same
+place. Navigli is a night already and has no variant. The stage is the host's
+pick for both phones, so the night is too: it rides `setup` and `start` as
+`night`, and the host offers it only when both phones speak protocol 5
+(`NIGHT_SINCE`), since an older guest would draw the day while the host drew
+night.
+
+**CHROME** recolours your paddle: the hero's colour mixed most of the way to
+silver, with the hero's own colour kept for the meter. Every hero stays its
+own hue, so a player can still tell RO from GU at a glance, and none of them
+comes out gold. It rides `hello` and `pick` as `chrome`; a build from before
+it ignores the field and draws the hero's own colour.
 
 **Hero mastery.** Each player also masters each hero, in up to four stars for
 the XP earned with it (`MASTERY_STEPS`: 100, 500, 1500 and 3000, about 5, 25,

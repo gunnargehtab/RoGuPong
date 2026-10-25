@@ -72,3 +72,32 @@ export function mirrorY(ctx, w, h) {
   ctx.drawImage(ctx.canvas, 0, 0, w, half, 0, 0, w, half);
   ctx.restore();
 }
+
+/**
+ * One colour by night: the brightest (lamps, a lit window, the sun's disc,
+ * which becomes the moon) stay lit; everything else turns to moonlight —
+ * darker, bluer and greyer, keeping its brightness order so the painting still
+ * reads. A map from colour to colour, so flat stays flat and a floor painted
+ * symmetric stays symmetric.
+ */
+export function nightColour(r, g, b) {
+  const lum = 0.3 * r + 0.59 * g + 0.11 * b;
+  if (lum > 215) return [Math.min(255, r * 0.9 + 24), Math.min(255, g * 0.9 + 22), Math.min(255, b * 0.85 + 30)];
+  return [r * 0.2 + lum * 0.12, g * 0.24 + lum * 0.16, b * 0.38 + lum * 0.28 + 20].map((v) => Math.min(255, Math.round(v)));
+}
+
+/** Repaint a finished scene canvas by night, in one pass (a stage's night variant, stages.js). */
+export function toNight(ctx, w, h) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  const memo = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+    let c = memo.get(key);
+    if (!c) memo.set(key, (c = nightColour(d[i], d[i + 1], d[i + 2])));
+    d[i] = c[0];
+    d[i + 1] = c[1];
+    d[i + 2] = c[2];
+  }
+  ctx.putImageData(img, 0, 0);
+}

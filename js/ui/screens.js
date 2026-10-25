@@ -8,7 +8,7 @@
 import { drawText, measure, GLYPH_H } from './pixelfont.js';
 import { renderLogoTo } from './logo.js';
 import { CHARACTERS, BALANCE, byId as charById } from '../game/characters.js';
-import { STAGES } from '../game/stages.js';
+import { STAGES, stageView } from '../game/stages.js';
 import { itemById } from '../game/items.js';
 import { drawFighter } from '../game/render.js';
 import { drawQrToCanvas } from '../net/qr.js';
@@ -1330,6 +1330,7 @@ export class Screens {
   screenLobby(data) {
     const {
       isHost, myChar, theirChar, theirName, theirReady, theirAway, myReady, myFlair, flairProgress,
+      night, nightOK, chrome,
       stage, crates, target, party, rtt, laggy, online, protocol, theirProtocol,
     } = data;
     const wrap = document.createElement('div');
@@ -1496,7 +1497,12 @@ export class Screens {
       });
       // Looks a level unlocks, while they are still to come.
       for (const f of lb.FLAIRS.filter((x) => x.level && !unlocked[x.id])) {
-        goals.push(`<small class="muted">🔒 ${esc(f.name)}: ${esc(f.hint)} &middot; LV ${flairProgress.level}/${f.level}</small>`);
+        goals.push(`<small class="muted">${badge('lock')} ${esc(f.name)}: ${esc(f.hint)} &middot; LV ${flairProgress.level}/${f.level}</small>`);
+      }
+      const chromeAt = lb.rewardLevel('chrome');
+      const chromeOK = flairProgress.level >= chromeAt;
+      if (!chromeOK) {
+        goals.push(`<small class="muted">${badge('lock')} CHROME paddle: Reach level ${chromeAt} &middot; LV ${flairProgress.level}/${chromeAt}</small>`);
       }
       flairSel.innerHTML = `
         <div class="title-bar">
@@ -1506,13 +1512,23 @@ export class Screens {
         <div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${lb.FLAIRS.filter((f) => unlocked[f.id]).map((f) => `
           <button class="btn small ${f.id === myFlair ? '' : 'secondary'}"
             data-action="pick-flair" data-flair="${f.id}" title="${esc(f.hint)}">${esc(f.name)}</button>`).join('')}</div>
+        ${chromeOK ? `<div class="row" style="margin:0 0 8px">
+          <button class="btn small ${chrome ? '' : 'secondary'}" data-action="pick-chrome">CHROME paddle: ${chrome ? 'on' : 'off'}</button></div>` : ''}
         ${goals.join('<br>')}`;
       wrap.appendChild(flairSel);
     }
 
     const stageSel = document.createElement('div');
     stageSel.className = 'panel tight';
-    const st = STAGES.find((s) => s.id === stage) || STAGES[0];
+    const st = stageView(stage, night);
+    // By night, from level 15: the host's to pick, for both phones.
+    const nightRow = !isHost || !st.nightName ? ''
+      : nightOK ? `<div class="row" style="margin-top:8px">
+          <button class="btn small ${night ? '' : 'secondary'}" data-action="toggle-night">${night ? `${badge('moon')} By night` : 'By day'}</button></div>`
+        : `<small class="muted" style="display:block;margin-top:8px">${
+          lb.unlockedAt(lb.levelProgress(this.profile.name || 'YOU').level, 'night')
+            ? 'By night: both phones need the latest version'
+            : `${badge('lock')} By night at LV ${lb.rewardLevel('night')}`}</small>`;
     stageSel.innerHTML = `
       <div class="title-bar">
         <h3>Stage</h3>
@@ -1532,7 +1548,7 @@ export class Screens {
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn small ${party ? '' : 'secondary'}" data-action="cycle-party">${party ? `${badge('party')} Party mode` : 'Classic mode'}</button>
-      </div>` : `<small class="muted">First to ${target}${party ? ` · ${badge('party')} PARTY MODE` : ''}</small>`}`;
+      </div>${nightRow}` : `<small class="muted">First to ${target}${party ? ` · ${badge('party')} PARTY MODE` : ''}</small>`}`;
     fillGlyphs(stageSel);
     wrap.appendChild(stageSel);
 

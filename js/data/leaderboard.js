@@ -151,25 +151,32 @@ export function levelFor(xp) {
 }
 
 /**
- * What a level brings, every five levels: a title, and at 20 the long
- * victory fanfare. A flair with a `level` (COMET) unlocks there too. Like
- * everything else here it is computed from the level, never stored
+ * What a level brings, every five levels: a title, and on some a thing to
+ * use — night stages for the host to pick at 15, the long victory fanfare at
+ * 20, the CHROME paddle at 25. A flair with a `level` (COMET) unlocks there
+ * too. Like everything else here it is computed from the level, never stored
  * (DESIGN.md §8).
  */
 export const LEVEL_REWARDS = [
   { level: 5, title: 'ROOKIE' },
   { level: 10, title: 'CONTENDER' },
-  { level: 15, title: 'ACE' },
-  { level: 20, title: 'VETERAN', fanfare: true },
-  { level: 25, title: 'CHAMPION' },
+  { level: 15, title: 'ACE', night: 'Night stages' },
+  { level: 20, title: 'VETERAN', fanfare: 'Victory fanfare' },
+  { level: 25, title: 'CHAMPION', chrome: 'CHROME paddle' },
   { level: 30, title: 'MASTER' },
 ];
+
+/** Whether `level` has unlocked a reward (`night`, `fanfare`, `chrome`). */
+export const unlockedAt = (level, what) => LEVEL_REWARDS.some((r) => r[what] && level >= r.level);
+
+/** The level that unlocks a reward. */
+export const rewardLevel = (what) => LEVEL_REWARDS.find((r) => r[what])?.level;
 
 /** The title a level carries, or '' below the first. */
 export const titleFor = (level) => LEVEL_REWARDS.filter((r) => level >= r.level).pop()?.title || '';
 
 /** Whether a level plays the long victory fanfare. */
-export const fanfareAt = (level) => LEVEL_REWARDS.some((r) => r.fanfare && level >= r.level);
+export const fanfareAt = (level) => unlockedAt(level, 'fanfare');
 
 // Every player's milestone counts and XP, from one pass over the history. The
 // lobby, the results and the Standings all ask, so it is kept until the
@@ -357,6 +364,7 @@ export function loadProfile() {
       name: p?.name || '',
       char: p?.char || 'ro',
       flair: FLAIRS.some((f) => f.id === p?.flair) ? p.flair : 'none',
+      chrome: !!p?.chrome,
       music: p?.music !== false,
       sfx: p?.sfx !== false,
       // Only a Graphics choice made by hand is kept. Older builds also saved
@@ -370,7 +378,7 @@ export function loadProfile() {
     };
   } catch {
     return {
-      name: '', char: 'ro', flair: 'none', music: true, sfx: true, quality: 'high', qualityChosen: false,
+      name: '', char: 'ro', flair: 'none', chrome: false, music: true, sfx: true, quality: 'high', qualityChosen: false,
       tapLearned: false,
     };
   }
