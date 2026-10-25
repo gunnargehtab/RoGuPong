@@ -18,12 +18,14 @@ import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
 import * as cloud from '../data/cloud.js';
 import { isIOS, inAppBrowser } from '../diag.js';
+import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
 
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
-// would make old phones pop the wrong one. Eight emoji in two grid rows, then
-// the quick-chat lines, which a build from before them pops as a 👋.
+// would make old phones pop the wrong one. Eight pixel icons (emotes.js) in
+// two grid rows, then the quick-chat lines, which a build from before them
+// pops as a wave. Builds before the icons show the same eight as emoji.
 export const EMOTES = [
-  '🔥', '😎', '😱', '🍕', '🤣', '👻', '🚀', '💩',
+  'fire', 'cool', 'scream', 'pizza', 'lol', 'ghost', 'rocket', 'poop',
   'GG', 'Nice shot!', 'So close!', 'Rematch?', 'Ready?', 'One sec!', 'Sorry!', 'Hurry up!',
 ];
 export const QUICK_CHAT_FROM = 8;
@@ -269,16 +271,19 @@ export class Screens {
   }
 
   /**
-   * Emoji and quick-chat, for talking without free text: the lobby, the
+   * Emotes and quick-chat, for talking without free text: the lobby, the
    * results and the pause screen carry them — never a rally in progress.
    */
   emoteBar() {
     const bar = document.createElement('div');
     bar.className = 'chat';
+    const icon = (id, i) =>
+      `<button data-action="emote" data-emote="${i}" aria-label="${esc(EMOTE_LABELS[id] || id)}"></button>`;
     const btn = (e, i) => `<button data-action="emote" data-emote="${i}">${esc(e)}</button>`;
     bar.innerHTML = `
-      <div class="emotes">${EMOTES.slice(0, QUICK_CHAT_FROM).map(btn).join('')}</div>
+      <div class="emotes">${EMOTES.slice(0, QUICK_CHAT_FROM).map(icon).join('')}</div>
       <div class="quick">${EMOTES.slice(QUICK_CHAT_FROM).map((e, i) => btn(e, i + QUICK_CHAT_FROM)).join('')}</div>`;
+    bar.querySelectorAll('.emotes button').forEach((b, i) => b.appendChild(emoteCanvas(EMOTES[i], 3)));
     return bar;
   }
 

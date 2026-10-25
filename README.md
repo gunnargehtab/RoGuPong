@@ -204,7 +204,7 @@ rain three times as fast, three fit on the court at once, and multiball turns
 up far more often. Same physics, same specials — just played in a hailstorm.
 
 **Emotes and quick-chat** in the lobby, on the results and on the pause
-screen: eight emoji, and eight lines like "GG", "Nice shot!" and "Rematch?"
+screen: eight pixel emotes, and eight lines like "GG", "Nice shot!" and "Rematch?"
 that pop up in a speech bubble on the other phone. Never mid-rally.
 
 **Flair** is earned, not bought: a rainbow trail for a 20-hit rally, flames

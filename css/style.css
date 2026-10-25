@@ -323,6 +323,9 @@ summary { padding: 12px 0; cursor: pointer; }
   padding: 10px 0; font-size: 1.1rem; background: #170c2c;
   border: 3px solid #3d2a63; cursor: pointer; color: var(--ink);
 }
+/* The icons are canvases (emotes.js); a button is as tall as a line of emoji was. */
+.emotes button { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 4px 0; }
+.emotes canvas, #emote-pop canvas { display: block; }
 /* Quick-chat lines wrap as chips, as many to a row as fit. */
 .quick { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick button {
@@ -341,7 +344,7 @@ summary { padding: 12px 0; cursor: pointer; }
 
 #emote-pop {
   position: fixed; left: 50%; top: 18%; transform: translateX(-50%);
-  font-size: 3rem; z-index: 60; pointer-events: none; opacity: 0;
+  z-index: 60; pointer-events: none; opacity: 0;
 }
 #emote-pop.show { animation: emote 1.4s steps(8) both; }
 /* A quick-chat line: a speech bubble with who said it, up long enough to read. */
