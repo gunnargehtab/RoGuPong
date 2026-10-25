@@ -797,14 +797,16 @@ class App {
         return;
       }
       const rec = this.pendingResult || this.buildRecord();
-      // A milestone crossed by this match unlocks its flair the moment the
-      // record lands — worth announcing over the results screen.
-      const before = lb.flairProgress(this.profile).unlocked;
+      // A milestone crossed by this match reaches its tier the moment the
+      // record lands — worth announcing over the results screen. A tier with
+      // a look of its own announces the look.
+      const before = lb.flairTiers(this.profile.name || 'YOU');
       lb.recordMatch(rec);
-      const after = lb.flairProgress(this.profile).unlocked;
-      for (const f of lb.FLAIRS) {
-        if (!before[f.id] && after[f.id]) {
-          this.screens.toast(`✨ ${f.name} flair unlocked!`, 'good');
+      const after = lb.flairTiers(this.profile.name || 'YOU');
+      for (const t of lb.TRACKS) {
+        for (let tier = before[t.id] + 1; tier <= after[t.id]; tier++) {
+          const f = lb.FLAIRS.find((x) => x.track === t.id && x.tier === tier);
+          this.screens.toast(f ? `✨ ${f.name} flair unlocked!` : `✨ ${lb.tierLabel(t, tier)} reached!`, 'good');
         }
       }
       this.pendingResult = null;

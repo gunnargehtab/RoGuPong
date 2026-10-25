@@ -73,43 +73,122 @@ const announce = (ids, from) => { for (const fn of arrivals) fn(ids, from); };
  * history every time they are asked for — nothing is written when a milestone
  * is reached, so records stay immutable and the merge stays conflict-free.
  * Losing your phone loses nothing the shared history can't re-earn you.
+ *
+ * Each look belongs to a track of three tiers. Tier I unlocks the classic
+ * look, tier II is a badge, tier III an upgraded look. The steps are what a
+ * player's history has to show for each tier (DESIGN.md §8).
  */
+export const TRACKS = [
+  { id: 'rainbow', name: 'RAINBOW', icon: '🌈', steps: [20, 28, 36],
+    goal: (n) => `Reach a ${n}-hit rally` },
+  { id: 'flame', name: 'FLAME', icon: '🔥', steps: [10, 50, 200],
+    goal: (n) => `Win ${n} matches` },
+  { id: 'star', name: 'STARLIGHT', icon: '⭐', steps: [1, 5, 25],
+    goal: (n) => (n === 1 ? 'Play on four stages' : `Play ${n} matches on each of four stages`) },
+  { id: 'royal', name: 'ROYAL', icon: '👑', steps: [1, 5, 20],
+    goal: (n) => (n === 1 ? 'Win a match without conceding a point' : `Win ${n} matches without conceding a point`) },
+];
+
+// STARLIGHT counts stages rather than matches: this many, each played at
+// least as often as the step asks.
+const TOUR = 4;
+
+const ROMAN = ['', 'I', 'II', 'III'];
+/** "FLAME II". */
+export const tierLabel = (track, tier) => `${track.name} ${ROMAN[tier]}`.trim();
+
+const look = (id, name, track, tier) => {
+  const t = TRACKS.find((x) => x.id === track);
+  return { id, name, track, tier, hint: t.goal(t.steps[tier - 1]) };
+};
+
 export const FLAIRS = [
   { id: 'none', name: 'STANDARD', hint: 'The classic look — always yours' },
-  { id: 'rainbow', name: 'RAINBOW', hint: 'Reach a 20-hit rally' },
-  { id: 'flame', name: 'FLAME', hint: 'Win ten matches' },
-  { id: 'star', name: 'STARLIGHT', hint: 'Play on all four stages' },
-  { id: 'royal', name: 'ROYAL', hint: 'Win a match without conceding a point' },
+  look('rainbow', 'RAINBOW', 'rainbow', 1),
+  look('flame', 'FLAME', 'flame', 1),
+  look('star', 'STARLIGHT', 'star', 1),
+  look('royal', 'ROYAL', 'royal', 1),
+  look('prism', 'PRISM', 'rainbow', 3),
+  look('inferno', 'INFERNO', 'flame', 3),
+  look('nova', 'NOVA', 'star', 3),
+  look('crown', 'CROWN', 'royal', 3),
 ];
 
 export const flairById = (id) => FLAIRS.find((f) => f.id === id) || FLAIRS[0];
 
-/** My milestone stats and which flairs they unlock. Names match exactly, like standings(). */
+// Every player's milestone counts, from one pass over the history. The lobby,
+// the results and the Standings all ask, so it is kept until the history changes.
+let milestoneCache = null;
+
+function milestones() {
+  if (milestoneCache?.rev === revision) return milestoneCache.byName;
+  const byName = new Map();
+  for (const rec of read()) {
+    rec.players.forEach((p, idx) => {
+      // One name on both sides counts once, as the player at index 0.
+      if (!p?.name || (idx === 1 && rec.players[0]?.name === p.name)) return;
+      let s = byName.get(p.name);
+      if (!s) byName.set(p.name, (s = { wins: 0, bestRally: 0, shutouts: 0, stages: new Map() }));
+      s.bestRally = Math.max(s.bestRally, rec.bestRally || 0);
+      s.stages.set(rec.stage, (s.stages.get(rec.stage) || 0) + 1);
+      if (rec.winner === idx) {
+        s.wins++;
+        if ((rec.score?.[1 - idx] ?? 1) === 0) s.shutouts++;
+      }
+    });
+  }
+  milestoneCache = { rev: revision, byName };
+  return byName;
+}
+
+/** How far a player is toward `step` on a track: [have, need]. */
+function toward(track, s, step) {
+  switch (track.id) {
+    case 'rainbow': return [s.bestRally, step];
+    case 'flame': return [s.wins, step];
+    case 'royal': return [s.shutouts, step];
+    default: return [Math.min(TOUR, [...s.stages.values()].filter((n) => n >= step).length), TOUR];
+  }
+}
+
+const noMilestones = () => ({ wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
+
+/** Tier reached on every track by one name: { rainbow: 0..3, … }. */
+export function flairTiers(name) {
+  const s = milestones().get(name) || noMilestones();
+  const tiers = {};
+  for (const t of TRACKS) {
+    tiers[t.id] = t.steps.filter((step) => {
+      const [have, need] = toward(t, s, step);
+      return have >= need;
+    }).length;
+  }
+  return tiers;
+}
+
+/**
+ * My milestone stats, the tier reached on each track, what the next tier asks
+ * (null once a track is complete) and which flairs that unlocks. Names match
+ * exactly, like standings().
+ */
 export function flairProgress(profile) {
   const me = profile.name || 'YOU';
-  let wins = 0;
-  let bestRally = 0;
-  let shutouts = 0;
-  const stages = new Set();
-  for (const rec of read()) {
-    const idx = rec.players.findIndex((p) => p?.name === me);
-    if (idx === -1) continue;
-    bestRally = Math.max(bestRally, rec.bestRally || 0);
-    stages.add(rec.stage);
-    if (rec.winner === idx) {
-      wins++;
-      if ((rec.score?.[1 - idx] ?? 1) === 0) shutouts++;
-    }
+  const s = milestones().get(me) || noMilestones();
+  const tiers = flairTiers(me);
+  const next = {};
+  for (const t of TRACKS) {
+    const tier = tiers[t.id] + 1;
+    if (tier > t.steps.length) { next[t.id] = null; continue; }
+    const [have, need] = toward(t, s, t.steps[tier - 1]);
+    next[t.id] = { tier, have, need, goal: t.goal(t.steps[tier - 1]) };
   }
+  const unlocked = {};
+  for (const f of FLAIRS) unlocked[f.id] = !f.track || tiers[f.track] >= f.tier;
   return {
-    stats: { wins, bestRally, stages: stages.size, shutouts },
-    unlocked: {
-      none: true,
-      rainbow: bestRally >= 20,
-      flame: wins >= 10,
-      star: stages.size >= 4,
-      royal: shutouts >= 1,
-    },
+    stats: { wins: s.wins, bestRally: s.bestRally, stages: s.stages.size, shutouts: s.shutouts },
+    tiers,
+    next,
+    unlocked,
   };
 }
 

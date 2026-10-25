@@ -83,6 +83,9 @@ const subScale = (s) => Math.max(1, s - 1);
 const meterHeight = (s) => Math.max(5, Math.round(s * 2.2));
 const streakScale = (s) => Math.max(1, Math.round(s / 3));
 
+// The INFERNO flair's trail, tail to ball.
+const INFERNO = ['#a51231', '#e8402a', '#ff7a3d', '#ffd166', '#fff3c4'];
+
 /** The on half of a full meter's blink. */
 const blinkOn = (time) => Math.floor(time * BLINK_HZ * 2) % 2 === 0;
 
@@ -895,15 +898,43 @@ export class Renderer {
       const f = i / trail.length;
       let alpha = f * (hot ? 0.55 : 0.32);
       let color = '#ffffff';
+      let size = 1;
+      let cross = false;
       if (hot) color = i % 2 ? '#ffd166' : '#ff5b2e';
       else if (flair === 'rainbow') { color = `hsl(${Math.round(f * 300 + time * 180) % 360} 90% 65%)`; alpha = f * 0.5; }
       else if (flair === 'flame') { color = i % 2 ? '#ffd166' : '#ff7a3d'; alpha = f * 0.45; }
       else if (flair === 'star') { color = '#ffffff'; alpha = f * (i % 3 === 0 ? 0.6 : 0.15); }
       else if (flair === 'royal') { color = '#ffd93b'; alpha = f * 0.45; }
+      // The tier III looks: the same idea as their track's, turned up.
+      else if (flair === 'prism') {
+        color = `hsl(${Math.round(f * 720 + time * 300) % 360} 95% 66%)`;
+        alpha = f * 0.62;
+        size = 1.2;
+      } else if (flair === 'inferno') {
+        // Red at the tail, white-hot at the ball, and flickering.
+        color = INFERNO[Math.min(INFERNO.length - 1, Math.floor(f * INFERNO.length))];
+        alpha = f * 0.6;
+        size = 1.05 + ((i + Math.floor(time * 12)) % 2) * 0.25;
+      } else if (flair === 'nova') {
+        color = i % 2 ? '#9fd8ff' : '#ffffff';
+        alpha = f * (i % 3 === 0 ? 0.8 : 0.3);
+        cross = i % 3 === 0;
+      } else if (flair === 'crown') {
+        color = i % 4 === 0 ? '#fff3c4' : '#ffd93b';
+        alpha = f * 0.55;
+        size = 1.1;
+      }
       ctx.globalAlpha = alpha * fade;
       ctx.fillStyle = color;
-      const rr = r * (0.35 + f * 0.65);
-      ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
+      const rr = r * (0.35 + f * 0.65) * size;
+      if (cross) {
+        // A four-point sparkle.
+        const t = Math.max(1, rr * 0.5);
+        ctx.fillRect(sx - rr * 1.5, sy - t / 2, rr * 3, t);
+        ctx.fillRect(sx - t / 2, sy - rr * 1.5, t, rr * 3);
+      } else {
+        ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1006,6 +1037,64 @@ export class Renderer {
         for (const [dx, dh] of [[-6, 3], [0, 5], [6, 3]]) {
           ctx.fillRect(sx + dx - 1, courtY + (outward < 0 ? -dh - 2 : 2), 3, dh);
         }
+      } else if (flair === 'prism') {
+        // RAINBOW's band across the whole face, ringed in a cycling hue.
+        const seg = w / 12;
+        for (let k = 0; k < 12; k++) {
+          ctx.fillStyle = `hsl(${(k * 30 + Math.round(time * 200)) % 360} 95% 64%)`;
+          ctx.fillRect(sx - w / 2 + k * seg, sy + h * 0.1, Math.ceil(seg), Math.max(2, h * 0.3));
+        }
+        ctx.strokeStyle = `hsl(${Math.round(time * 120) % 360} 95% 70%)`;
+        ctx.lineWidth = 2;
+        roundRect(ctx, sx - w / 2 - 2, sy - h / 2 - 2, w + 4, h + 4, h * 0.5);
+        ctx.stroke();
+      } else if (flair === 'inferno') {
+        // Six tongues, red outside and yellow in, and an ember rising off them.
+        for (let k = 0; k < 6; k++) {
+          const x = sx - w / 2 + (k + 0.5) * (w / 6);
+          const fh = 5 + ((k + Math.floor(time * 7)) % 3) * 2;
+          ctx.fillStyle = '#e8402a';
+          ctx.fillRect(x - 3, courtY + (outward < 0 ? -fh - 1 : 1), 6, fh);
+          ctx.fillStyle = '#ffd166';
+          ctx.fillRect(x - 1, courtY + (outward < 0 ? -fh + 1 : 1), 2, fh - 2);
+        }
+        const rise = (time * 1.6) % 1;
+        ctx.globalAlpha = 1 - rise;
+        ctx.fillStyle = '#ffb347';
+        ctx.fillRect(sx + Math.sin(time * 3) * w * 0.3 - 1, courtY + outward * (10 + rise * 14) - 1, 3, 3);
+        ctx.globalAlpha = 1;
+      } else if (flair === 'nova') {
+        // STARLIGHT's pips, five of them, a pale ring and a glint along the face.
+        ctx.fillStyle = '#ffffff';
+        for (let k = 0; k < 5; k++) {
+          ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(time * 4 + k * 1.7));
+          ctx.fillRect(sx - w / 2 + (k + 0.5) * (w / 5) - 1, sy - 1, 2, 2);
+        }
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#9fd8ff';
+        ctx.lineWidth = 1;
+        roundRect(ctx, sx - w / 2 - 2, sy - h / 2 - 2, w + 4, h + 4, h * 0.5);
+        ctx.stroke();
+        const gx = sx - w / 2 + ((time * 0.7) % 1) * w;
+        ctx.fillRect(gx - 3, courtY - 1, 7, 1);
+        ctx.fillRect(gx, courtY - 4, 1, 7);
+      } else if (flair === 'crown') {
+        // ROYAL's ring doubled, a tall five-point crown and a ruby that catches the light.
+        ctx.strokeStyle = '#ffd93b';
+        ctx.lineWidth = 2;
+        roundRect(ctx, sx - w / 2 - 2, sy - h / 2 - 2, w + 4, h + 4, h * 0.5);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,243,196,0.7)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, sx - w / 2 - 5, sy - h / 2 - 5, w + 10, h + 10, h * 0.6);
+        ctx.stroke();
+        ctx.fillStyle = '#ffd93b';
+        ctx.fillRect(sx - 16, courtY + (outward < 0 ? -6 : 3), 33, 3);
+        for (const [dx, dh] of [[-15, 6], [-8, 10], [0, 13], [8, 10], [15, 6]]) {
+          ctx.fillRect(sx + dx - 1, courtY + (outward < 0 ? -dh - 3 : 3), 3, dh);
+        }
+        ctx.fillStyle = blinkOn(time * 0.25) ? '#ff3d5a' : '#ffd0d8';
+        ctx.fillRect(sx - 2, courtY + (outward < 0 ? -9 : 5), 5, 4);
       }
 
       if (p.grow > 0) {
