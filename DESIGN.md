@@ -780,6 +780,16 @@ no internet.
   flame when the ball is hot, full-screen colour washes on specials and goals,
   pixel text that pops and drifts off a milestone rally, and a CRT scanline and
   vignette pass over the whole thing — menus included.
+- **The menus sit on the stage art**, dimmed by a third. It was half, and
+  with the title screen's panels stacked to the bottom of a phone the
+  painting behind them was a dark blur at the edges. Now the title keeps its
+  panels short — Play on its own line, the rest on rows — so a phone shows
+  sky above the logo and water or paving below the panels, and the text
+  outside a panel carries a shadow for the daylit stages. The backdrop
+  behind the title and the menus before a match turns through the four
+  stages, the stage of the day first and the next on each return to the
+  title, so all four paintings get seen; the lobby and everything after
+  show the stage actually picked.
 - **The celebrations** escalate with the stakes. Reaching match point adds a
   red wash and a court-wide ring to the goal blast; three points in a row puts
   an "N IN A ROW!" banner on the court and a pulsing ×N marker under the

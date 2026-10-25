@@ -1506,8 +1506,10 @@ export class Renderer {
     ctx.fillRect(g.x * this.W - r, g.y * this.H - r, r * 2, r * 2);
     ctx.globalAlpha = 1;
 
-    // Darken so the menu panels stay legible over any stage.
-    ctx.fillStyle = 'rgba(8, 3, 18, 0.48)';
+    // Dim so the panels and the loose text stay legible over any stage — by
+    // a third, not the half it was: at half the painting behind the title was
+    // a dark blur, and the panels carry their own dark fill anyway.
+    ctx.fillStyle = 'rgba(8, 3, 18, 0.32)';
     ctx.fillRect(0, 0, this.W, this.H);
 
     if (fx) this.drawFx(fx, false);
