@@ -1024,6 +1024,22 @@ reward is worked out from the level when it is asked for, never written down.
 Crossing a reward level toasts what it brought. All of them are cosmetic:
 nothing a level brings touches play.
 
+**Hero mastery.** Each player also masters each hero, in up to four stars for
+the XP earned with it (`MASTERY_STEPS`: 100, 500, 1500 and 3000, about 5, 25,
+70 and 140 matches). Mirror matches count here, unlike in the Heroes tab's win
+rates: mastery measures playing a hero, not how it fares against the others.
+The stars show under every fighter on the character select and beside each
+player in a hero's split on the Heroes tab, and a new star toasts over the
+results. Once a player has reached level 5, the character select points at the
+hero they have played least, if it trails their most-played by four to one.
+Players settle on a favourite; the nudge is there because the rest of the
+roster is where the variety, and the Heroes tab's data, are. Four stars mark
+the paddle: four pips in the hero's lit colour along its goal side, away from
+the flair on the court side. Both phones hold the same history, so each works
+out both players' marks when the match starts and nothing travels; an older
+build just draws no pips. Computed in the same cached pass as the levels,
+never stored.
+
 **Rivalry.** Each pair of friends has a rank too, from the matches the two
 have played each other:
 

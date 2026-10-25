@@ -432,7 +432,7 @@ export class Renderer {
   draw(m, opts) {
     const {
       view = 0, stage, fx, time = 0, names = ['P1', 'P2'], chars,
-      flairs = ['none', 'none'],
+      flairs = ['none', 'none'], masters = [false, false],
       localPaddleX = null, rtt = 0, showTouchHint = false, showTapHint = false,
     } = opts;
     const ctx = this.ctx;
@@ -465,7 +465,7 @@ export class Renderer {
     this.drawProps(m, flip, time, chars);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
-    this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time);
+    this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time, masters);
     if (reveal < 1) ctx.restore();
     this.drawFx(fx, flip);
     this.drawBanners(m, flip, chars, view, time);
@@ -1025,7 +1025,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0) {
+  drawPaddles(m, flip, chars, view, localPaddleX, flairs = ['none', 'none'], time = 0, masters = [false, false]) {
     const ctx = this.ctx;
     const c = this.court;
     for (let i = 0; i < 2; i++) {
@@ -1164,6 +1164,14 @@ export class Renderer {
           ctx.fillStyle = c;
           ctx.fillRect(cx - k * 5 - n / 2, cy - n / 2, n, n);
         }
+      }
+
+      // A hero fully mastered: four pips in the hero's lit colour along the
+      // goal side, clear of the flair, which decorates the court side.
+      if (masters[i]) {
+        const backY = i === view ? sy + h / 2 + 2 : sy - h / 2 - 4;
+        ctx.fillStyle = lit(ch.color);
+        for (let k = 0; k < 4; k++) ctx.fillRect(sx + (k - 1.5) * Math.min(10, w / 5) - 1, backY, 3, 2);
       }
 
       if (p.grow > 0) {

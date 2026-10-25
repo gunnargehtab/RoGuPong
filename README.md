@@ -229,6 +229,10 @@ each other, from NEW RIVALS at the first match to ETERNAL at 300, whoever
 won them. The lobby shows yours under the two names, and the leaderboard
 lists all your rivals. NEMESES (75 matches) get a quick-chat line of their own.
 
+**Hero mastery** gives every hero up to four stars for the XP you've earned
+with it, shown under each fighter when you pick. Four stars put a mark on
+your paddle that your friend sees too.
+
 **Four stages**, each a real place painted in code as a 16-bit scene, with a
 court floor that is the same place seen from above: **Navigli Night** — the
 canal at blue hour, lamplight streaking the water, terraces three deep;
