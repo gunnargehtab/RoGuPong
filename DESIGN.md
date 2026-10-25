@@ -790,6 +790,14 @@ no internet.
   stages, the stage of the day first and the next on each return to the
   title, so all four paintings get seen; the lobby and everything after
   show the stage actually picked.
+- **A match opens on the painting.** In portrait the court covers the
+  painting for the whole match, so the countdown is its one moment on
+  screen. For the first 1.2 s the stage art has the screen to itself, with
+  the 3 counting down over it; the court then wipes in from its centre line
+  in twelve steps over the next second, HUD strips last, and is whole with
+  most of a second to spare before the serve. Only the match's first
+  countdown does this. The resume countdown after a pause runs over a court
+  that must stay in view.
 - **The celebrations** escalate with the stakes. Reaching match point adds a
   red wash and a court-wide ring to the goal blast; three points in a row puts
   an "N IN A ROW!" banner on the court and a pulsing ×N marker under the

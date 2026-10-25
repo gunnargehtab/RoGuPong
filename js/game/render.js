@@ -6,7 +6,7 @@
 // so you are always the paddle at the bottom.
 
 import { drawText, measure } from '../ui/pixelfont.js';
-import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, AEGIS_HALF, ballRadius } from './match.js';
+import { BALL_R, PADDLE_H, PADDLE_Y, SHIELD_Y, CRATE_R, COURT_ASPECT, AEGIS_HALF, COUNTDOWN, ballRadius } from './match.js';
 import { itemById } from './items.js';
 import { mix } from './scenes/kit.js';
 
@@ -14,6 +14,12 @@ const SHAKE_MARGIN = 24;        // slack the backdrop paints beyond the canvas
 const HUD_TOP = 0.08;           // fraction of the safe height
 const HUD_BOTTOM = 0.09;
 const BLINK_HZ = 3;             // a full meter's blink, on the paddle and the HUD
+// A match opens on the stage painting alone: the court wipes in from its
+// centre line after INTRO_HOLD seconds of the countdown, over INTRO_WIPE
+// seconds, in INTRO_STEPS steps.
+const INTRO_HOLD = 1.2;
+const INTRO_WIPE = 1.0;
+const INTRO_STEPS = 12;
 
 /* ------------------------------------------------------------------ */
 /* Fighter sprites — 11x12, hand-placed                                */
@@ -436,18 +442,48 @@ export class Renderer {
       ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
     }
 
+    // The opening: in portrait the court covers the painting for the whole
+    // match, so the countdown is its one moment on screen. The painting has
+    // the screen to itself first, with the count over it, then the court
+    // wipes in from its centre line, HUD strips last, and is whole with most
+    // of a second to spare before the serve.
+    const reveal = this.introReveal(m);
+    if (reveal < 1) {
+      this.drawBackdrop(stage, time, false);
+      const cy = this.court.y + this.court.h / 2;
+      const hh = Math.round(reveal * Math.max(cy, this.H - cy));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-SHAKE_MARGIN, cy - hh, this.W + SHAKE_MARGIN * 2, hh * 2);
+      ctx.clip();
+    }
     this.drawBackdrop(stage, time, true);
     this.drawCourt(m, stage, flip, chars, view, time);
     this.drawProps(m, flip, time, chars);
     this.drawCrates(m, flip, time);
     this.drawBalls(m, flip, chars, time, flairs);
     this.drawPaddles(m, flip, chars, view, localPaddleX, flairs, time);
+    if (reveal < 1) ctx.restore();
     this.drawFx(fx, flip);
     this.drawBanners(m, flip, chars, view, time);
     this.drawHud(m, chars, names, view, time, rtt);
     if (showTouchHint) this.drawTouchHint(time);
     if (showTapHint) this.drawTapHint(time);
     this.drawOverlay(fx);
+  }
+
+  /**
+   * How much of the court layer the opening shows, 0..1 — 1 outside the
+   * opening. Stepped, like the UI's own animations. Only the match's first
+   * countdown counts: the resume countdown after a pause runs in 'play', and
+   * a court that vanished mid-match would be a bug, not an intro.
+   */
+  introReveal(m) {
+    if (m.phase !== 'countdown') return 1;
+    const f = (COUNTDOWN - m.phaseTime - INTRO_HOLD) / INTRO_WIPE;
+    if (f >= 1) return 1;
+    if (f <= 0) return 0;
+    return Math.ceil(f * INTRO_STEPS) / INTRO_STEPS;
   }
 
   /* ---------------------------------------------------------------- */
@@ -1350,9 +1386,10 @@ export class Renderer {
         scale: scale * 2.2 * pop, color: n > 0 ? '#ffffff' : '#8affc1',
         outline: '#1a0d2b', align: 'center', baseline: 'middle',
       });
+      // Outlined: during the opening it sits on the painting, sky and all.
       drawText(ctx, line, cx, cy + scale * 22, {
-        scale: Math.max(1, scale * 0.6), color: 'rgba(255,255,255,0.7)',
-        align: 'center', baseline: 'middle',
+        scale: Math.max(1, scale * 0.6), color: '#ffffff', alpha: 0.8,
+        outline: '#1a0d2b', align: 'center', baseline: 'middle',
       });
     };
 
