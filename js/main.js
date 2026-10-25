@@ -800,9 +800,16 @@ class App {
       // A milestone crossed by this match reaches its tier the moment the
       // record lands — worth announcing over the results screen. A tier with
       // a look of its own announces the look.
-      const before = lb.flairTiers(this.profile.name || 'YOU');
+      const me = this.profile.name || 'YOU';
+      const before = lb.flairTiers(me);
+      const levelBefore = lb.levelProgress(me).level;
       lb.recordMatch(rec);
-      const after = lb.flairTiers(this.profile.name || 'YOU');
+      const after = lb.flairTiers(me);
+      const level = lb.levelProgress(me).level;
+      if (level > levelBefore) {
+        this.screens.toast(`⬆ Level ${level}!`, 'good');
+        audio.levelUp();
+      }
       for (const t of lb.TRACKS) {
         for (let tier = before[t.id] + 1; tier <= after[t.id]; tier++) {
           const f = lb.FLAIRS.find((x) => x.track === t.id && x.tier === tier);

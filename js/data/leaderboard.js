@@ -116,9 +116,44 @@ export const FLAIRS = [
 
 export const flairById = (id) => FLAIRS.find((f) => f.id === id) || FLAIRS[0];
 
-// Every player's milestone counts, from one pass over the history. The lobby,
-// the results and the Standings all ask, so it is kept until the history changes.
+/**
+ * Experience, for the player level (DESIGN.md §8). Most of it is for playing:
+ * between two friends the one who keeps losing is the one who stops, so a
+ * loss earns a good half of what a win does. Points are counted against the
+ * target, so a first-to-3 and a first-to-11 weigh about the same, and a long
+ * rally rewards both players.
+ */
+export function matchXp(rec, idx) {
+  const target = rec.target > 0 ? rec.target : Math.max(1, ...rec.score);
+  const points = Math.min(rec.score[idx], target);
+  return 10 + Math.round((10 * points) / target)
+    + (rec.winner === idx ? 6 : 0)
+    + Math.min(5, Math.floor((rec.bestRally || 0) / 6));
+}
+
+// Level n → n + 1 costs 50 × n XP: about 100 matches to level 10, about 1000
+// to the cap. The cap sits far inside MAX_RECORDS, so trimming the oldest
+// matches rarely costs anybody a level.
+export const LEVEL_CAP = 30;
+const levelCost = (n) => 50 * n;
+
+/** The level `xp` reaches, the XP into it and what it takes (0 at the cap). */
+export function levelFor(xp) {
+  let level = 1;
+  let floor = 0;
+  while (level < LEVEL_CAP && xp >= floor + levelCost(level)) {
+    floor += levelCost(level);
+    level++;
+  }
+  return { xp, level, into: xp - floor, need: level < LEVEL_CAP ? levelCost(level) : 0 };
+}
+
+// Every player's milestone counts and XP, from one pass over the history. The
+// lobby, the results and the Standings all ask, so it is kept until the
+// history changes.
 let milestoneCache = null;
+
+const noMilestones = () => ({ xp: 0, wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
 
 function milestones() {
   if (milestoneCache?.rev === revision) return milestoneCache.byName;
@@ -128,7 +163,8 @@ function milestones() {
       // One name on both sides counts once, as the player at index 0.
       if (!p?.name || (idx === 1 && rec.players[0]?.name === p.name)) return;
       let s = byName.get(p.name);
-      if (!s) byName.set(p.name, (s = { wins: 0, bestRally: 0, shutouts: 0, stages: new Map() }));
+      if (!s) byName.set(p.name, (s = noMilestones()));
+      s.xp += matchXp(rec, idx);
       s.bestRally = Math.max(s.bestRally, rec.bestRally || 0);
       s.stages.set(rec.stage, (s.stages.get(rec.stage) || 0) + 1);
       if (rec.winner === idx) {
@@ -151,7 +187,11 @@ function toward(track, s, step) {
   }
 }
 
-const noMilestones = () => ({ wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
+
+/** One name's level: { xp, level, into, need }. Names match exactly, like standings(). */
+export function levelProgress(name) {
+  return levelFor(milestones().get(name)?.xp || 0);
+}
 
 /** Tier reached on every track by one name: { rainbow: 0..3, … }. */
 export function flairTiers(name) {

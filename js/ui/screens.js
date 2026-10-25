@@ -261,11 +261,25 @@ export class Screens {
     const commit = () => {
       this.profile.name = input.value.trim().toUpperCase().slice(0, 10);
       this.app.saveProfile();
+      // The level belongs to the name, so a new name shows its own.
+      const level = document.getElementById('plevel');
+      if (level) level.innerHTML = this.levelHtml(lb.levelProgress(this.profile.name || 'YOU'));
     };
     input.addEventListener('input', commit);
     input.addEventListener('change', commit);
     input.addEventListener('blur', commit);
     return input;
+  }
+
+  /** "LV 12", the XP into the level and a bar toward the next; `fill` overrides the bar's width. */
+  levelHtml(p, { title = '', fill = null } = {}) {
+    const pct = p.need ? Math.round((100 * p.into) / p.need) : 100;
+    return `
+      <div class="title-bar">
+        <b class="warn">${title}LV ${p.level}</b>
+        <small class="muted">${p.need ? `${p.into}/${p.need} XP` : 'top level'}</small>
+      </div>
+      <div class="xpbar"><i data-to="${pct}" style="width:${fill ?? pct}%"></i></div>`;
   }
 
   /**
@@ -330,7 +344,12 @@ export class Screens {
         Older phones get a much smoother game.</small>
       ${isIOS() ? `<small class="muted" style="display:block;margin-top:6px">
         No sound? On iPhone the game follows the silent switch.</small>` : ''}`;
+    const level = document.createElement('div');
+    level.id = 'plevel';
+    level.style.marginTop = '10px';
+    level.innerHTML = this.levelHtml(lb.levelProgress(this.profile.name || 'YOU'));
     who.insertBefore(this.nameInput(), who.querySelector('.row'));
+    who.insertBefore(level, who.querySelector('.row'));
     wrap.appendChild(who);
 
     // For a glitch that never reached the Link Lost screen: a dead sound, a
@@ -616,7 +635,7 @@ export class Screens {
       ${rows.map((r, i) => `
         <tr class="${r.name === me ? 'me' : ''}">
           <td class="rank">${medal(i)}</td>
-          <td><b>${esc(r.name)}</b>${this.standingsSub(r)}</td>
+          <td><b>${esc(r.name)}</b> <small class="warn">LV&nbsp;${lb.levelProgress(r.name).level}</small>${this.standingsSub(r)}</td>
           <td class="num">${r.won}</td>
           <td class="num">${r.lost}</td>
           <td class="num">${Math.round(r.winRate * 100)}%</td>
@@ -1180,9 +1199,11 @@ export class Screens {
     versus.className = 'panel tight';
     versus.innerHTML = `
       <div class="status" style="justify-content:space-between">
-        <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}</span>
+        <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}
+          <span class="warn">LV&nbsp;${lb.levelProgress(this.profile.name || 'YOU').level}</span></span>
         <span class="${laggy ? 'warn' : 'muted'}" id="lobby-rtt">${rtt ? rtt + 'ms' : 'linked'}</span>
-        <span>${esc(theirName || 'FRIEND')}${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
+        <span>${esc(theirName || 'FRIEND')}
+          <span class="warn">LV&nbsp;${lb.levelProgress(theirName || 'FRIEND').level}</span>${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
           class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
       </div>`;
     wrap.appendChild(versus);
@@ -1402,6 +1423,26 @@ export class Screens {
           <b>${h2h.a}</b> &ndash; <b>${h2h.b}</b></td></tr>
       </table>`;
     wrap.appendChild(panel);
+
+    // What the match earned, winner and loser alike. The bar fills from where
+    // the match found you — from empty after a level-up — once per match, not
+    // again on every redraw of this screen.
+    const gained = lb.matchXp(rec, view);
+    const now = lb.levelProgress(me.name);
+    const was = lb.levelFor(Math.max(0, now.xp - gained));
+    const up = now.level > was.level;
+    const fresh = this.xpShown !== rec.id;
+    this.xpShown = rec.id;
+    const start = !fresh ? null : up ? 0 : was.need ? Math.round((100 * was.into) / was.need) : 100;
+    const xp = document.createElement('div');
+    xp.className = 'panel tight';
+    xp.innerHTML = `${this.levelHtml(now, { title: up ? 'LEVEL UP! ' : '', fill: start })}
+      <small class="muted">+${gained} XP this match</small>`;
+    wrap.appendChild(xp);
+    if (start != null) {
+      const bar = xp.querySelector('.xpbar i');
+      requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = `${bar.dataset.to}%`; }));
+    }
 
     wrap.appendChild(this.emoteBar());
 
