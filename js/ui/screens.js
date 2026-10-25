@@ -325,13 +325,17 @@ export class Screens {
     tag.innerHTML = 'Two phones &middot; one WiFi &middot; no server';
     wrap.appendChild(tag);
 
+    // Kept short on purpose: with Play on its own line and the rest on a row,
+    // a phone shows the stage painting above the logo and below the panels.
     const menu = document.createElement('div');
     menu.className = 'panel';
     menu.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:10px">
         <button class="btn" data-action="play">Play</button>
-        <button class="btn secondary" data-action="board">Leaderboard</button>
-        <button class="btn secondary" data-action="howto">How to play</button>
+        <div class="row">
+          <button class="btn small secondary" data-action="board">Leaderboard</button>
+          <button class="btn small secondary" data-action="howto">How to play</button>
+        </div>
       </div>`;
     wrap.appendChild(menu);
 
@@ -342,17 +346,13 @@ export class Screens {
         <h3>Player</h3>
         <small class="muted">tap to change</small>
       </div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn small secondary" data-action="toggle-music">Music: ${this.profile.music ? 'on' : 'off'}</button>
-        <button class="btn small secondary" data-action="toggle-sfx">Sfx: ${this.profile.sfx ? 'on' : 'off'}</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn small secondary" data-action="toggle-quality">
-          Graphics set to ${this.app.quality === 'low' ? 'fast' : 'full'}</button>
+      <div class="row wrap" style="margin-top:10px">
+        <button class="btn small secondary" data-action="toggle-music">Music ${this.profile.music ? 'on' : 'off'}</button>
+        <button class="btn small secondary" data-action="toggle-sfx">Sfx ${this.profile.sfx ? 'on' : 'off'}</button>
+        <button class="btn small secondary" data-action="toggle-quality">${this.app.quality === 'low' ? 'Fast' : 'Full'} gfx</button>
       </div>
       <small class="muted" style="display:block;margin-top:6px">
-        Tap to switch. Fast drops the glows, scanlines and animated scenery.
-        Older phones get a much smoother game.</small>
+        Fast graphics drop the glows, scanlines and animated scenery: smoother on older phones.</small>
       ${isIOS() ? `<small class="muted" style="display:block;margin-top:6px">
         No sound? On iPhone the game follows the silent switch.</small>` : ''}`;
     const level = document.createElement('div');

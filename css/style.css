@@ -159,6 +159,11 @@ b, strong { color: var(--ink); }
 
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
+/* Small buttons sharing a row: tighter tracking so three fit a narrow phone... */
+.row .btn.small { letter-spacing: 0.08em; padding-left: 8px; padding-right: 8px; }
+/* ...and a row that may wrap sends its third to a line of its own when they don't. */
+.row.wrap { flex-wrap: wrap; }
+.row.wrap > * { flex: 1 1 96px; }
 
 /* ---------------- inputs ---------------- */
 
@@ -276,6 +281,9 @@ tr.split td.num { padding-left: 5px; }
   text-align: center; font-size: 0.62rem; letter-spacing: 0.12em;
   color: var(--dim); text-transform: uppercase;
 }
+/* Text that sits on the stage art itself, not in a panel: a shadow keeps it
+   readable over the daylit courtyard now that the art is dimmed less. */
+.credit, .textbtn { text-shadow: 0 1px 0 var(--shadow), 0 0 4px var(--shadow); }
 .credit .heart { color: var(--red); }
 
 /* A fold's heading is its only handle: thumb-sized, like everything else. */

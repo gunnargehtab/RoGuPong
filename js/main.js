@@ -23,6 +23,10 @@ import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
 import { log, logLines, clock, device, isIOS, inAppBrowser, watchOtherCopies } from './diag.js';
 
+// Screens with no stage of their own, drawn over the turning menu stage; the
+// lobby, the results, the pause and Link Lost screens show the match's.
+const MENU_STAGE_SCREENS = new Set(['title', 'howto', 'board', 'league', 'connect', 'host', 'join', 'pasteAnswer']);
+
 const SNAPSHOT_HZ = 30;
 const INPUT_HZ = 30;
 // The simulation always advances in fixed slices. A phone that can only paint
@@ -190,6 +194,12 @@ class App {
     this.scanner = null;
     this.match = null;
     this.stage = STAGES[0];
+    // The backdrop behind the title and the menus before a match: the stage
+    // of the day first, then the next on each return to the title, so all
+    // four paintings get seen. The lobby and everything after show the stage
+    // actually picked (this.stage).
+    this.menuTurn = Math.floor(Date.now() / 86400000) % STAGES.length;
+    this.menuStage = STAGES[this.menuTurn];
     this.target = 7;
     this.party = false;
     this.balance = BALANCE;       // the host's, for the match being played
@@ -441,6 +451,9 @@ class App {
       this.screens.hide();
       return;
     }
+    if (screen === 'title' && this.mode === 'menu' && this.screens.current) {
+      this.menuStage = STAGES[++this.menuTurn % STAGES.length];
+    }
     this.mode = 'menu';
     this.screens.show(screen, data);
   }
@@ -534,9 +547,14 @@ class App {
     }
   }
 
+  /** The stage painted behind the current menu screen. */
+  menuBackdrop() {
+    return MENU_STAGE_SCREENS.has(this.screens.current) ? this.menuStage : this.stage;
+  }
+
   stepMenu(dt) {
     this.fx.update(dt);
-    this.renderer.drawMenuBackdrop(this.stage, this.menuTime, this.fx);
+    this.renderer.drawMenuBackdrop(this.menuBackdrop(), this.menuTime, this.fx);
     this.screens.tickLogo(this.menuTime);
     this.watchHandshake();
   }
