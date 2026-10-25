@@ -116,9 +116,44 @@ export const FLAIRS = [
 
 export const flairById = (id) => FLAIRS.find((f) => f.id === id) || FLAIRS[0];
 
-// Every player's milestone counts, from one pass over the history. The lobby,
-// the results and the Standings all ask, so it is kept until the history changes.
+/**
+ * Experience, for the player level (DESIGN.md §8). Most of it is for playing:
+ * between two friends the one who keeps losing is the one who stops, so a
+ * loss earns a good half of what a win does. Points are counted against the
+ * target, so a first-to-3 and a first-to-11 weigh about the same, and a long
+ * rally rewards both players.
+ */
+export function matchXp(rec, idx) {
+  const target = rec.target > 0 ? rec.target : Math.max(1, ...rec.score);
+  const points = Math.min(rec.score[idx], target);
+  return 10 + Math.round((10 * points) / target)
+    + (rec.winner === idx ? 6 : 0)
+    + Math.min(5, Math.floor((rec.bestRally || 0) / 6));
+}
+
+// Level n → n + 1 costs 50 × n XP: about 100 matches to level 10, about 1000
+// to the cap. The cap sits far inside MAX_RECORDS, so trimming the oldest
+// matches rarely costs anybody a level.
+export const LEVEL_CAP = 30;
+const levelCost = (n) => 50 * n;
+
+/** The level `xp` reaches, the XP into it and what it takes (0 at the cap). */
+export function levelFor(xp) {
+  let level = 1;
+  let floor = 0;
+  while (level < LEVEL_CAP && xp >= floor + levelCost(level)) {
+    floor += levelCost(level);
+    level++;
+  }
+  return { xp, level, into: xp - floor, need: level < LEVEL_CAP ? levelCost(level) : 0 };
+}
+
+// Every player's milestone counts and XP, from one pass over the history. The
+// lobby, the results and the Standings all ask, so it is kept until the
+// history changes.
 let milestoneCache = null;
+
+const noMilestones = () => ({ xp: 0, wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
 
 function milestones() {
   if (milestoneCache?.rev === revision) return milestoneCache.byName;
@@ -128,7 +163,8 @@ function milestones() {
       // One name on both sides counts once, as the player at index 0.
       if (!p?.name || (idx === 1 && rec.players[0]?.name === p.name)) return;
       let s = byName.get(p.name);
-      if (!s) byName.set(p.name, (s = { wins: 0, bestRally: 0, shutouts: 0, stages: new Map() }));
+      if (!s) byName.set(p.name, (s = noMilestones()));
+      s.xp += matchXp(rec, idx);
       s.bestRally = Math.max(s.bestRally, rec.bestRally || 0);
       s.stages.set(rec.stage, (s.stages.get(rec.stage) || 0) + 1);
       if (rec.winner === idx) {
@@ -151,7 +187,11 @@ function toward(track, s, step) {
   }
 }
 
-const noMilestones = () => ({ wins: 0, bestRally: 0, shutouts: 0, stages: new Map() });
+
+/** One name's level: { xp, level, into, need }. Names match exactly, like standings(). */
+export function levelProgress(name) {
+  return levelFor(milestones().get(name)?.xp || 0);
+}
 
 /** Tier reached on every track by one name: { rainbow: 0..3, … }. */
 export function flairTiers(name) {
@@ -190,6 +230,77 @@ export function flairProgress(profile) {
     next,
     unlocked,
   };
+}
+
+/**
+ * Rivalry: a level for a pair of friends, from the matches they have played
+ * each other — whoever won them. The ranks measure how much two people have
+ * played, not who is ahead (the head-to-head already says that), so the
+ * friend who keeps losing climbs exactly as fast. Computed from the records
+ * like everything else here (DESIGN.md §8).
+ */
+export const RIVAL_RANKS = [
+  { at: 1, name: 'NEW RIVALS' },
+  { at: 10, name: 'RIVALS' },
+  { at: 30, name: 'ARCH RIVALS' },
+  { at: 75, name: 'NEMESES' },
+  { at: 150, name: 'LEGENDS' },
+  { at: 300, name: 'ETERNAL' },
+];
+// From this rank on, a pair gets a quick-chat line of its own.
+export const RIVAL_LINE_RANK = 3;
+
+const pairKey = (a, b) => (a < b ? `${a}\n${b}` : `${b}\n${a}`);
+
+// Every pair's matches and wins, from one pass, kept until the history changes.
+let pairCache = null;
+
+function pairs() {
+  if (pairCache?.rev === revision) return pairCache.byPair;
+  const byPair = new Map();
+  for (const rec of read()) {
+    const [a, b] = rec.players;
+    if (!a?.name || !b?.name || a.name === b.name) continue;
+    const key = pairKey(a.name, b.name);
+    let p = byPair.get(key);
+    if (!p) byPair.set(key, (p = { played: 0, wins: new Map() }));
+    p.played++;
+    const winner = rec.players[rec.winner]?.name;
+    if (winner) p.wins.set(winner, (p.wins.get(winner) || 0) + 1);
+  }
+  pairCache = { rev: revision, byPair };
+  return byPair;
+}
+
+/**
+ * Where `me` and `them` stand as rivals: matches played, my wins and theirs,
+ * the rank reached (-1 before the first match) and the next one, if any.
+ */
+export function rivalry(me, them) {
+  const p = me === them ? null : pairs().get(pairKey(me, them));
+  const played = p?.played || 0;
+  const rank = RIVAL_RANKS.filter((r) => played >= r.at).length - 1;
+  return {
+    played,
+    won: p?.wins.get(me) || 0,
+    lost: p?.wins.get(them) || 0,
+    rank,
+    name: rank >= 0 ? RIVAL_RANKS[rank].name : null,
+    next: RIVAL_RANKS[rank + 1] || null,
+  };
+}
+
+/** Everyone `me` has played, most-played first. */
+export function rivals(me) {
+  const list = [];
+  for (const key of pairs().keys()) {
+    const [a, b] = key.split('\n');
+    if (a === me || b === me) {
+      const them = a === me ? b : a;
+      list.push({ them, ...rivalry(me, them) });
+    }
+  }
+  return list.sort((x, y) => y.played - x.played || x.them.localeCompare(y.them));
 }
 
 export function loadProfile() {

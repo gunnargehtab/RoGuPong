@@ -23,12 +23,16 @@ import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
 // Indices ride the wire ({t:'emote', i}), so only ever append — reordering
 // would make old phones pop the wrong one. Eight pixel icons (emotes.js) in
 // two grid rows, then the quick-chat lines, which a build from before them
-// pops as a wave. Builds before the icons show the same eight as emoji.
+// pops as a wave; builds before the icons show the same eight as emoji. The
+// last line is a rivalry's own, offered only to a pair at RIVAL_LINE_RANK or
+// above.
 export const EMOTES = [
   'fire', 'cool', 'scream', 'pizza', 'lol', 'ghost', 'rocket', 'poop',
   'GG', 'Nice shot!', 'So close!', 'Rematch?', 'Ready?', 'One sec!', 'Sorry!', 'Hurry up!',
+  'Not you again!',
 ];
 export const QUICK_CHAT_FROM = 8;
+const RIVAL_LINE = 16;
 
 /** A heading rendered in the game's own pixel font. */
 export function pixelLabel(text, opts = {}) {
@@ -263,11 +267,25 @@ export class Screens {
     const commit = () => {
       this.profile.name = input.value.trim().toUpperCase().slice(0, 10);
       this.app.saveProfile();
+      // The level belongs to the name, so a new name shows its own.
+      const level = document.getElementById('plevel');
+      if (level) level.innerHTML = this.levelHtml(lb.levelProgress(this.profile.name || 'YOU'));
     };
     input.addEventListener('input', commit);
     input.addEventListener('change', commit);
     input.addEventListener('blur', commit);
     return input;
+  }
+
+  /** "LV 12", the XP into the level and a bar toward the next; `fill` overrides the bar's width. */
+  levelHtml(p, { title = '', fill = null } = {}) {
+    const pct = p.need ? Math.round((100 * p.into) / p.need) : 100;
+    return `
+      <div class="title-bar">
+        <b class="warn">${title}LV ${p.level}</b>
+        <small class="muted">${p.need ? `${p.into}/${p.need} XP` : 'top level'}</small>
+      </div>
+      <div class="xpbar"><i data-to="${pct}" style="width:${fill ?? pct}%"></i></div>`;
   }
 
   /**
@@ -280,9 +298,11 @@ export class Screens {
     const icon = (id, i) =>
       `<button data-action="emote" data-emote="${i}" aria-label="${esc(EMOTE_LABELS[id] || id)}"></button>`;
     const btn = (e, i) => `<button data-action="emote" data-emote="${i}">${esc(e)}</button>`;
+    const rivals = lb.rivalry(this.profile.name || 'YOU', this.app.theirName || 'FRIEND').rank >= lb.RIVAL_LINE_RANK;
+    const lines = EMOTES.map((e, i) => i).filter((i) => i >= QUICK_CHAT_FROM && (i !== RIVAL_LINE || rivals));
     bar.innerHTML = `
       <div class="emotes">${EMOTES.slice(0, QUICK_CHAT_FROM).map(icon).join('')}</div>
-      <div class="quick">${EMOTES.slice(QUICK_CHAT_FROM).map((e, i) => btn(e, i + QUICK_CHAT_FROM)).join('')}</div>`;
+      <div class="quick">${lines.map((i) => btn(EMOTES[i], i)).join('')}</div>`;
     bar.querySelectorAll('.emotes button').forEach((b, i) => b.appendChild(emoteCanvas(EMOTES[i], 3)));
     return bar;
   }
@@ -335,7 +355,12 @@ export class Screens {
         Older phones get a much smoother game.</small>
       ${isIOS() ? `<small class="muted" style="display:block;margin-top:6px">
         No sound? On iPhone the game follows the silent switch.</small>` : ''}`;
+    const level = document.createElement('div');
+    level.id = 'plevel';
+    level.style.marginTop = '10px';
+    level.innerHTML = this.levelHtml(lb.levelProgress(this.profile.name || 'YOU'));
     who.insertBefore(this.nameInput(), who.querySelector('.row'));
+    who.insertBefore(level, who.querySelector('.row'));
     wrap.appendChild(who);
 
     // For a glitch that never reached the Link Lost screen: a dead sound, a
@@ -621,14 +646,37 @@ export class Screens {
       ${rows.map((r, i) => `
         <tr class="${r.name === me ? 'me' : ''}">
           <td class="rank">${medal(i)}</td>
-          <td><b>${esc(r.name)}</b>${this.standingsSub(r)}</td>
+          <td><b>${esc(r.name)}</b> <small class="warn">LV&nbsp;${lb.levelProgress(r.name).level}</small>${this.standingsSub(r)}</td>
           <td class="num">${r.won}</td>
           <td class="num">${r.lost}</td>
           <td class="num">${Math.round(r.winRate * 100)}%</td>
           <td class="num">${r.diff > 0 ? '+' : ''}${r.diff}</td>
           <td class="num">${r.bestRally}</td>
         </tr>`).join('')}
+      </tbody></table>${this.rivalsHtml()}`;
+  }
+
+  /** The friends I have played, most-played first, with where each rivalry stands. */
+  rivalsHtml() {
+    const list = lb.rivals(this.profile.name || 'YOU');
+    if (!list.length) return '';
+    return `<h3 style="margin-top:14px">Your rivals</h3>
+      <table style="margin-top:6px"><tbody>${list.map((r) => `
+        <tr>
+          <td><b>${esc(r.them)}</b><br><small class="warn">${r.name}</small></td>
+          <td class="num"><small>${r.played} played<br>${r.won}&ndash;${r.lost}</small></td>
+          <td class="num"><small class="muted">${r.next ? `${r.next.name}<br>at ${r.next.at}` : 'top rank'}</small></td>
+        </tr>`).join('')}
       </tbody></table>`;
+  }
+
+  /** "⚔️ ARCH RIVALS · 34 matches · 18–16 · NEMESES at 75", from my side. */
+  rivalryHtml(them) {
+    const r = lb.rivalry(this.profile.name || 'YOU', them);
+    if (r.rank < 0) return '<span class="muted">⚔️ Your first match together</span>';
+    return `⚔️ <b class="warn">${r.name}</b>
+      <span class="muted">&middot; ${r.played} match${r.played === 1 ? '' : 'es'} &middot; ${r.won}&ndash;${r.lost}${
+  r.next ? ` &middot; ${r.next.name} at ${r.next.at}` : ''}</span>`;
   }
 
   /** Under a Standings name: the favourite hero, then a badge per flair track reached. */
@@ -1185,11 +1233,14 @@ export class Screens {
     versus.className = 'panel tight';
     versus.innerHTML = `
       <div class="status" style="justify-content:space-between">
-        <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}</span>
+        <span><span class="dot ok" style="margin-right:8px"></span>${esc(this.profile.name || 'YOU')}
+          <span class="warn">LV&nbsp;${lb.levelProgress(this.profile.name || 'YOU').level}</span></span>
         <span class="${laggy ? 'warn' : 'muted'}" id="lobby-rtt">${rtt ? rtt + 'ms' : 'linked'}</span>
-        <span>${esc(theirName || 'FRIEND')}${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
+        <span>${esc(theirName || 'FRIEND')}
+          <span class="warn">LV&nbsp;${lb.levelProgress(theirName || 'FRIEND').level}</span>${theirAway ? ' <span class="warn">(away)</span>' : ''}<span
           class="dot ${theirReady && !theirAway ? 'ok' : 'warn'}" style="margin-left:8px"></span></span>
-      </div>`;
+      </div>
+      <div class="center" style="margin-top:8px"><small>${this.rivalryHtml(theirName || 'FRIEND')}</small></div>`;
     wrap.appendChild(versus);
 
     // Online, a round trip of a tenth of a second or more is ordinary. The
@@ -1405,8 +1456,29 @@ export class Screens {
         <tr><td>Stage</td><td class="num">${esc((STAGES.find((s) => s.id === rec.stage) || STAGES[0]).name)}</td></tr>
         <tr><td>Head to head</td><td class="num">
           <b>${h2h.a}</b> &ndash; <b>${h2h.b}</b></td></tr>
+        <tr><td>Rivalry</td><td class="num"><b class="warn">${lb.rivalry(me.name, them.name).name || ''}</b></td></tr>
       </table>`;
     wrap.appendChild(panel);
+
+    // What the match earned, winner and loser alike. The bar fills from where
+    // the match found you — from empty after a level-up — once per match, not
+    // again on every redraw of this screen.
+    const gained = lb.matchXp(rec, view);
+    const now = lb.levelProgress(me.name);
+    const was = lb.levelFor(Math.max(0, now.xp - gained));
+    const up = now.level > was.level;
+    const fresh = this.xpShown !== rec.id;
+    this.xpShown = rec.id;
+    const start = !fresh ? null : up ? 0 : was.need ? Math.round((100 * was.into) / was.need) : 100;
+    const xp = document.createElement('div');
+    xp.className = 'panel tight';
+    xp.innerHTML = `${this.levelHtml(now, { title: up ? 'LEVEL UP! ' : '', fill: start })}
+      <small class="muted">+${gained} XP this match</small>`;
+    wrap.appendChild(xp);
+    if (start != null) {
+      const bar = xp.querySelector('.xpbar i');
+      requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = `${bar.dataset.to}%`; }));
+    }
 
     wrap.appendChild(this.emoteBar());
 

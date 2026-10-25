@@ -208,6 +208,12 @@ export class Audio {
     });
   }
 
+  levelUp() {
+    [0, 7, 12, 16, 19, 24].forEach((n, i) => {
+      setTimeout(() => this.tone(NOTE(9 + n) * 2, i === 5 ? 0.3 : 0.08, 'square', 0.16), i * 70);
+    });
+  }
+
   defeat() {
     [0, -3, -7, -12].forEach((n, i) => {
       setTimeout(() => this.tone(NOTE(9 + n) * 2, 0.22, 'triangle', 0.16), i * 140);

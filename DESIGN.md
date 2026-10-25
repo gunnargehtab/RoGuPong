@@ -945,6 +945,60 @@ older build just sees the plain paddle. There is no anti-cheat — a guest
 claims whatever flair it likes and the host draws it, because the threat
 model is two kids on a sofa.
 
+**Levels.** Every player also has a level, from 1 to 30, computed from the
+same records the same way: never stored, the same on every phone that holds
+the history, and won back from friends or the cloud league if a phone is
+cleared. A match earns
+
+| | XP |
+| --- | --- |
+| Playing it | 10 |
+| Points scored, against the target | up to 10 |
+| Winning it | 6 |
+| Its longest rally, one per six hits | up to 5 |
+
+so a loss earns 10–24 and a win 26–31. The weighting is the point: between
+two friends the one who keeps losing is the one who stops playing, and a
+level that only grew with wins would widen the gap the leaderboard already
+shows. Points are counted as a share of the target, so a first-to-3 is worth
+about what a first-to-11 is; a long rally is both players' doing and pays
+both.
+
+Level *n* → *n* + 1 costs 50 × *n* XP: level 2 within a few matches,
+level 10 after about a hundred, the cap after about a thousand. The cap is
+there for `MAX_RECORDS`: past 3000 records the oldest are trimmed, and a
+level that kept climbing with lifetime totals would start to fall. A player
+would need a thousand matches inside the kept window before trimming could
+cost them a level. XP is worked out in the same cached pass as the flair
+tiers. The title shows your level under your name (a new name shows its
+own), the lobby shows both players', the Standings every player's, and the
+results screen what the match earned, with the bar filling from where the
+match found you. A level-up toasts and plays a short arpeggio. The numbers
+are first guesses, like the flair steps.
+
+**Rivalry.** Each pair of friends has a rank too, from the matches the two
+have played each other:
+
+| Rank | Matches together |
+| --- | --- |
+| NEW RIVALS | 1 |
+| RIVALS | 10 |
+| ARCH RIVALS | 30 |
+| NEMESES | 75 |
+| LEGENDS | 150 |
+| ETERNAL | 300 |
+
+Every match counts once, whoever won it. The head-to-head already says who is
+ahead; the rank says how much the two have played, so it climbs as fast for
+the friend who keeps losing, and it is the one number on the board that
+belongs to both of them. The lobby shows it under the two names with the
+head-to-head and the next rank, the results carry it as a row, a rank-up
+toasts, and the Standings tab lists your rivals, most-played first. From
+NEMESES on, the pair's quick-chat gets a line of its own, "Not you again!",
+appended to the list like any other line so a build from before it pops a wave.
+One name on both sides of a record is no rivalry and is left out. Counted in
+one cached pass over the history, like the rest.
+
 **Known limits, accepted.** The same threat model covers the league: a faked
 record spreads to everyone just as a real one does, and with cloud sync anyone
 holding the key can add one without connecting. Clear only empties this phone.
@@ -1113,9 +1167,10 @@ compositor — a real slice of touch-to-paddle latency on Android.
   nudge when a name is missing or taken (§8).
 - **No in-game voice, video or free-text chat.** Players talk through eight
   emotes and eight quick-chat lines ("GG", "Nice shot!", "Rematch?", "One
-  sec!"…) in the lobby, on the results and on the pause screen, never over a
-  rally in progress. They travel as an index into one list, so new lines are
-  only ever appended, and a build from before them pops a wave instead. A line
+  sec!"…), plus one more for a pair of NEMESES or above (§8), in the lobby,
+  on the results and on the pause screen, never over a rally in progress.
+  They travel as an index into one list, so new lines are only ever
+  appended, and a build from before them pops a wave instead. A line
   arrives in a speech bubble naming who sent it. Voice was ruled out because
   turning on the microphone changes how iOS routes the game's sound. Video
   was ruled out because a video tile covers the court on a portrait phone.
