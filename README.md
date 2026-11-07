@@ -92,7 +92,10 @@ moment it lands in the box.
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
 > the link never comes up, put one phone on a personal hotspot and connect the
-> other to it.
+> other to it. **On Android, turn mobile data off if the WiFi has no
+> internet:** Android sends the game over mobile data otherwise, and it never
+> reaches the other phone. When the phones can't connect, the game says what
+> got through between them and which of these to try.
 
 > **If you have to step away** mid-match — a notification, another app — the
 > match pauses on both phones and picks up with a countdown when you're back.

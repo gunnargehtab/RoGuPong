@@ -9,7 +9,7 @@
 //   'state'  unreliable + unordered — 30 Hz simulation snapshots and inputs,
 //            where a late packet is worth less than the next one
 
-import { packSignal, unpackSignal } from './sdp.js';
+import { packSignal, unpackSignal, listCandidates, familyOf, networkOf, isInternet } from './sdp.js';
 import { log } from '../diag.js';
 
 const ICE_SERVERS = [
@@ -41,6 +41,49 @@ const SILENCE_MS = 8000;
 // The state is meant to be temporary — a WiFi power-save stall, a router blip,
 // the other phone's radio napping — and usually clears by itself within seconds.
 const DISCONNECT_GRACE_MS = 10000;
+// How often the connectivity checks are tallied while a link comes up.
+const CHECKS_SAMPLE_MS = 2000;
+// The longest a guest waits to hear from the host before taking its link as
+// open anyway (Peer.channelOpened). The host speaks first within a round trip.
+const ANNOUNCED_OPEN_MS = 1000;
+
+/** 10/8, 172.16/12 or 192.168/16 — the ranges a WiFi router hands out — as bytes; else null. */
+function privateV4(address) {
+  const b = address.split('.').map(Number);
+  if (b.length !== 4) return null;
+  const ok = b[0] === 10 || (b[0] === 172 && b[1] >= 16 && b[1] < 32) || (b[0] === 192 && b[1] === 168);
+  return ok ? b : null;
+}
+
+// How a host candidate's network reads in diagnostics.
+const NET_LABEL = { wired: 'wired', wifi: 'wifi', other: 'other', cell: 'cell', any: 'default route' };
+const NET_ORDER = ['wired', 'wifi', 'other', 'cell', 'default route', 'local'];
+
+/**
+ * One side's addresses in a few words, e.g. "wifi v4+v6×2, cell v4+v6×2,
+ * internet v4 via wifi": host addresses by the network they're on where
+ * Chrome says so ("local" where nothing does — any other browser, and every
+ * description rebuilt from a compact code), then the internet (srflx)
+ * addresses and the network that found them.
+ */
+function describeAddresses(cands) {
+  if (!cands.length) return 'none';
+  const groups = new Map();
+  const vias = new Set();
+  for (const c of cands) {
+    const net = NET_LABEL[networkOf(c)] || 'local';
+    const group = c.type === 'srflx' ? 'internet' : net;
+    if (c.type === 'srflx' && networkOf(c) && networkOf(c) !== 'any') vias.add(net);
+    if (!groups.has(group)) groups.set(group, new Map());
+    const fams = groups.get(group);
+    fams.set(familyOf(c), (fams.get(familyOf(c)) || 0) + 1);
+  }
+  const fams = (m) => ['v4', 'v6', 'mdns'].filter((f) => m.has(f))
+    .map((f) => (m.get(f) > 1 ? `${f}×${m.get(f)}` : f)).join('+');
+  const parts = NET_ORDER.filter((g) => groups.has(g)).map((g) => `${g} ${fams(groups.get(g))}`);
+  if (groups.has('internet')) parts.push(`internet ${fams(groups.get('internet'))}${vias.size ? ` via ${[...vias].join('+')}` : ''}`);
+  return parts.join(', ');
+}
 
 function waitForIceGathering(pc, online) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -95,6 +138,10 @@ export class Peer {
     this.rttAvg = 0;              // ... smoothed, for anything that adjusts to it
     this.stalledAt = 0;           // when the link went 'disconnected'; 0 while it is up
     this.judgeFrom = 0;           // no verdicts before this: the page just came back
+    this.sent = null;             // the candidates this phone's code carried
+    // The connectivity checks while connecting, per candidate pair (sampleChecks).
+    this.pairs = new Map();
+    this.strangers = new Set();
     // Milliseconds of silence to put up with. The app swaps in its own: how
     // patient to be depends on whether a match is on.
     this.patience = () => SILENCE_MS;
@@ -114,9 +161,13 @@ export class Peer {
       else if (s === 'failed' && this.online && !this.openedAt) return;
       else if (s === 'failed' || s === 'closed') this.handleDrop(s);
     });
+    // Chrome never says 'failed' here: it remaps that to 'disconnected'
+    // (crbug 957487), so a link that never came up reads 'disconnected',
+    // and only connectionState says 'failed'.
     this.pc.addEventListener('iceconnectionstatechange', () => {
       if (!this.closed) log(`ice: ${this.pc.iceConnectionState}`);
     });
+    this.sampleChecks();
   }
 
   /* -------- events -------- */
@@ -149,6 +200,7 @@ export class Peer {
       await peer.pc.setLocalDescription(offer);
       await waitForIceGathering(peer.pc, online);
       peer.code = await packSignal(peer.pc.localDescription.sdp, 'offer', { online });
+      await peer.noteSent();
     } catch (err) {
       log(`invite failed: ${err.code || err.message} · ${peer.candidates()}`);
       peer.close();
@@ -180,12 +232,22 @@ export class Peer {
       await peer.pc.setLocalDescription(answer);
       await waitForIceGathering(peer.pc, online);
       peer.code = await packSignal(peer.pc.localDescription.sdp, 'answer', { online });
+      await peer.noteSent();
     } catch (err) {
       peer.close();
       throw err;
     }
     peer.logGathered();
     return peer;
+  }
+
+  /** Which candidates this phone's code carried: a compact code has room for six. */
+  async noteSent() {
+    try {
+      this.sent = listCandidates((await unpackSignal(this.code)).sdp);
+    } catch {
+      this.sent = null;   // diagnostics only
+    }
   }
 
   /** Host side: finish the handshake with the reply scanned off the guest. */
@@ -202,18 +264,14 @@ export class Peer {
 
   wireChannel(ch) {
     ch.binaryType = 'arraybuffer';
-    ch.addEventListener('open', () => {
-      if (this.ctl && this.ctl.readyState === 'open' && !this.connected) {
-        this.connected = true;
-        this.openedAt = this.lastSeen = performance.now();
-        log(`link: open after ${((this.openedAt - this.createdAt) / 1000).toFixed(1)} s · ${this.candidates()}`);
-        this.startHeartbeat();
-        this.emit('open');
-      }
-    });
+    ch.addEventListener('open', () => this.channelOpened());
     ch.addEventListener('close', () => this.handleDrop('closed'));
     ch.addEventListener('message', (ev) => {
       this.lastSeen = performance.now();
+      // A word from the host: the guest's end can send now (channelOpened).
+      // The link opens before the message is handled, so the app's opening
+      // moves don't undo what the message brings.
+      if (!this.connected && ch === this.ctl) this.channelOpened(true);
       let msg;
       try {
         msg = JSON.parse(ev.data);
@@ -225,6 +283,30 @@ export class Peer {
       if (ch.label === 'state') this.emit('state', msg);
       else this.emit('msg', msg);
     });
+  }
+
+  /**
+   * The link is open once the reliable channel is — and, on the guest, once
+   * the host has been heard on it. The guest's channels are the host's,
+   * announced to it, and Chrome calls an announced channel open a moment
+   * before it can send. A message sent in that moment is dropped without a
+   * word: on a busy phone that was the guest's hello, now and then, which
+   * left the host without the guest's name, build and history. Anything that
+   * arrives on the channel shows it can send as well; failing that, a
+   * second's wait does. The host's own channels open ready.
+   */
+  channelOpened(heard = false) {
+    if (this.connected || this.closed || !this.ctl || this.ctl.readyState !== 'open') return;
+    if (!this.isHost && !heard) {
+      this.openWait ??= setTimeout(() => this.channelOpened(true), ANNOUNCED_OPEN_MS);
+      return;
+    }
+    clearTimeout(this.openWait);
+    this.connected = true;
+    this.openedAt = this.lastSeen = performance.now();
+    log(`link: open after ${((this.openedAt - this.createdAt) / 1000).toFixed(1)} s · ${this.candidates()}`);
+    this.startHeartbeat();
+    this.emit('open');
   }
 
   /**
@@ -300,27 +382,121 @@ export class Peer {
     this.closed = true;
     this.connected = false;
     clearInterval(this.hb);
+    clearTimeout(this.checkTimer);
+    clearTimeout(this.openWait);
     this.emit('drop', reason);
   }
 
   /**
-   * What kinds of address each end offered, e.g. "ours mdns×1 srflx×1 ·
-   * theirs mdns×1". Diagnostics only: it tells a WiFi that blocks phones from
-   * each other apart from one where they never learned where to look.
+   * What each end offered, e.g. "ours wifi v4+v6×2, cell v4+v6×2, internet
+   * v4 via wifi, 6 of 7 in the code · theirs local mdns×2, internet v4+v6".
+   * Only the UDP candidates a code can carry count, not Chrome's TCP twins.
+   * Diagnostics only: it tells a phone whose game would go over mobile data,
+   * or one not on the WiFi at all, from two that knew where to look.
    */
   candidates() {
-    const kinds = (desc) => {
-      if (!desc) return 'none yet';
-      const seen = new Map();
-      for (const line of desc.sdp.split(/\r?\n/)) {
-        const m = line.match(/^a=candidate:\S+ \d+ \S+ \d+ (\S+) \d+ typ (\w+)/);
-        if (!m) continue;
-        const kind = m[2] === 'host' && m[1].endsWith('.local') ? 'mdns' : m[2];
-        seen.set(kind, (seen.get(kind) || 0) + 1);
-      }
-      return [...seen].map(([k, n]) => `${k}×${n}`).join(' ') || 'none';
-    };
-    return `ours ${kinds(this.pc.localDescription)} · theirs ${kinds(this.pc.remoteDescription)}`;
+    const ours = this.pc.localDescription ? listCandidates(this.pc.localDescription.sdp) : null;
+    const theirs = this.pc.remoteDescription ? listCandidates(this.pc.remoteDescription.sdp) : null;
+    const cut = this.sent && ours && this.sent.length < ours.length
+      ? `, ${this.sent.length} of ${ours.length} in the code` : '';
+    return `ours ${ours ? describeAddresses(ours) + cut : 'none yet'} · `
+      + `theirs ${theirs ? describeAddresses(theirs) : 'none yet'}`;
+  }
+
+  /**
+   * Tally the connectivity checks every couple of seconds while the link is
+   * coming up: how many this phone sent, how many were answered, and how many
+   * came in from the other phone. The verdict on a handshake that never
+   * connected hangs on these — a WiFi that keeps phones apart lets nothing
+   * through either way — and Chrome forgets a pair the moment it fails, so
+   * each pair keeps the most it was seen with.
+   */
+  async sampleChecks() {
+    if (this.closed || this.openedAt) return;
+    try {
+      const stats = await this.pc.getStats();
+      stats.forEach((s) => {
+        if (s.type === 'candidate-pair') {
+          const was = this.pairs.get(s.id) || { sent: 0, answered: 0, heard: 0 };
+          this.pairs.set(s.id, {
+            sent: Math.max(was.sent, s.requestsSent || 0),
+            answered: Math.max(was.answered, s.responsesReceived || 0),
+            heard: Math.max(was.heard, s.requestsReceived || 0),
+          });
+        } else if (s.type === 'remote-candidate' && s.candidateType === 'prflx') {
+          this.strangers.add(s.id);
+        }
+      });
+    } catch { /* closed meanwhile */ }
+    if (!this.closed && !this.openedAt) this.checkTimer = setTimeout(() => this.sampleChecks(), CHECKS_SAMPLE_MS);
+  }
+
+  /** The checks so far, summed over every pair: { sent, answered, heard }. */
+  checkTotals() {
+    const t = { sent: 0, answered: 0, heard: 0 };
+    for (const p of this.pairs.values()) {
+      t.sent += p.sent;
+      t.answered += p.answered;
+      t.heard += p.heard;
+    }
+    return t;
+  }
+
+  /**
+   * What got through while connecting: 'both' once a check of this phone's
+   * was answered, 'theirs' when only the other phone's checks arrived, 'none'
+   * when neither did. null until there is someone to check with.
+   */
+  reach() {
+    const t = this.checkTotals();
+    if (t.answered) return 'both';
+    if (t.heard) return 'theirs';
+    return this.pc.remoteDescription ? 'none' : null;
+  }
+
+  /** The checks in a line, for diagnostics. */
+  checksText() {
+    const t = this.checkTotals();
+    const odd = this.strangers.size ? `, ${this.strangers.size} from addresses not in their code` : '';
+    return `checks ${t.sent} sent, ${t.answered} answered, ${t.heard} heard${odd}`;
+  }
+
+  /**
+   * Whether this phone's own addresses say it can't play over the WiFi:
+   * 'no-wifi' when it lists only mobile-data addresses, and 'mobile-data'
+   * when it is on a WiFi but its one way to the internet is mobile data. That
+   * is a WiFi with no internet behind it, and while mobile data is on,
+   * Android sends everything that isn't tied to a network over mobile data —
+   * the game's link included, which Chrome never ties to one. null when all
+   * looks well, or when nothing says: only Chrome gives the networks, and
+   * only once the page may list them (the camera allowed).
+   */
+  wifiTrouble() {
+    const ours = this.pc.localDescription ? listCandidates(this.pc.localDescription.sdp) : [];
+    const hosts = ours.filter((c) => c.type === 'host').map(networkOf);
+    if (!hosts.length || hosts.some((n) => n == null || n === 'any')) return null;
+    if (hosts.every((n) => n === 'cell')) return 'no-wifi';
+    const nets = ours.filter(isInternet).map(networkOf);
+    return hosts.includes('wifi') && nets.length && nets.every((n) => n === 'cell') ? 'mobile-data' : null;
+  }
+
+  /**
+   * Whether the two phones' local IPv4 addresses put them on one network, as
+   * far as the codes show: true, false, or null when either side shows none
+   * (an iPhone hides its own behind mDNS names). A home network is a /24;
+   * the 10/8 and 172.16/12 ranges compare on /16, cut wider in offices and
+   * schools.
+   */
+  sameNetwork() {
+    const lan = (desc, mine) => (desc ? listCandidates(desc.sdp) : [])
+      .filter((c) => c.type === 'host' && familyOf(c) === 'v4' && !(mine && networkOf(c) === 'cell'))
+      .map((c) => privateV4(c.address))
+      .filter(Boolean);
+    const key = (b) => b.slice(0, b[0] === 192 ? 3 : 2).join('.');
+    const ours = new Set(lan(this.pc.localDescription, true).map(key));
+    const theirs = lan(this.pc.remoteDescription, false).map(key);
+    if (!ours.size || !theirs.length) return null;
+    return theirs.some((k) => ours.has(k));
   }
 
   /* -------- sending -------- */
@@ -380,6 +556,8 @@ export class Peer {
   close() {
     this.closed = true;
     clearInterval(this.hb);
+    clearTimeout(this.checkTimer);
+    clearTimeout(this.openWait);
     try { this.pc.close(); } catch { /* already gone */ }
   }
 }

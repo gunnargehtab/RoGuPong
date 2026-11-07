@@ -55,6 +55,8 @@ export function isIOS() {
     || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+export const isAndroid = () => /Android/.test(navigator.userAgent);
+
 /**
  * Opened inside another app — a chat app's built-in browser, not the phone's
  * own. It keeps a storage of its own, and closing it to get back to the chat
