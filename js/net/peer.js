@@ -43,6 +43,9 @@ const SILENCE_MS = 8000;
 const DISCONNECT_GRACE_MS = 10000;
 // How often the connectivity checks are tallied while a link comes up.
 const CHECKS_SAMPLE_MS = 2000;
+// The longest a guest waits to hear from the host before taking its link as
+// open anyway (Peer.channelOpened). The host speaks first within a round trip.
+const ANNOUNCED_OPEN_MS = 1000;
 
 /** 10/8, 172.16/12 or 192.168/16 — the ranges a WiFi router hands out — as bytes; else null. */
 function privateV4(address) {
@@ -261,18 +264,14 @@ export class Peer {
 
   wireChannel(ch) {
     ch.binaryType = 'arraybuffer';
-    ch.addEventListener('open', () => {
-      if (this.ctl && this.ctl.readyState === 'open' && !this.connected) {
-        this.connected = true;
-        this.openedAt = this.lastSeen = performance.now();
-        log(`link: open after ${((this.openedAt - this.createdAt) / 1000).toFixed(1)} s · ${this.candidates()}`);
-        this.startHeartbeat();
-        this.emit('open');
-      }
-    });
+    ch.addEventListener('open', () => this.channelOpened());
     ch.addEventListener('close', () => this.handleDrop('closed'));
     ch.addEventListener('message', (ev) => {
       this.lastSeen = performance.now();
+      // A word from the host: the guest's end can send now (channelOpened).
+      // The link opens before the message is handled, so the app's opening
+      // moves don't undo what the message brings.
+      if (!this.connected && ch === this.ctl) this.channelOpened(true);
       let msg;
       try {
         msg = JSON.parse(ev.data);
@@ -284,6 +283,30 @@ export class Peer {
       if (ch.label === 'state') this.emit('state', msg);
       else this.emit('msg', msg);
     });
+  }
+
+  /**
+   * The link is open once the reliable channel is — and, on the guest, once
+   * the host has been heard on it. The guest's channels are the host's,
+   * announced to it, and Chrome calls an announced channel open a moment
+   * before it can send. A message sent in that moment is dropped without a
+   * word: on a busy phone that was the guest's hello, now and then, which
+   * left the host without the guest's name, build and history. Anything that
+   * arrives on the channel shows it can send as well; failing that, a
+   * second's wait does. The host's own channels open ready.
+   */
+  channelOpened(heard = false) {
+    if (this.connected || this.closed || !this.ctl || this.ctl.readyState !== 'open') return;
+    if (!this.isHost && !heard) {
+      this.openWait ??= setTimeout(() => this.channelOpened(true), ANNOUNCED_OPEN_MS);
+      return;
+    }
+    clearTimeout(this.openWait);
+    this.connected = true;
+    this.openedAt = this.lastSeen = performance.now();
+    log(`link: open after ${((this.openedAt - this.createdAt) / 1000).toFixed(1)} s · ${this.candidates()}`);
+    this.startHeartbeat();
+    this.emit('open');
   }
 
   /**
@@ -360,6 +383,7 @@ export class Peer {
     this.connected = false;
     clearInterval(this.hb);
     clearTimeout(this.checkTimer);
+    clearTimeout(this.openWait);
     this.emit('drop', reason);
   }
 
@@ -533,6 +557,7 @@ export class Peer {
     this.closed = true;
     clearInterval(this.hb);
     clearTimeout(this.checkTimer);
+    clearTimeout(this.openWait);
     try { this.pc.close(); } catch { /* already gone */ }
   }
 }

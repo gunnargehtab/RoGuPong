@@ -1167,6 +1167,7 @@ but takes nothing back out of the league.
 | This phone leaves the screen | No verdict on the link while it's hidden, nor for a couple of heartbeats after it comes back — or after any heartbeat that fires late |
 | A phone leaves the screen mid-match | The match holds on both phones, and the waiting one shows a pause screen with emotes and quick-chat. It resumes with a 3 s countdown, or is called off after 30 s |
 | A friend closes the tab or reloads | Their page says goodbye on the way out, so the other phone knows at once |
+| Chrome hands the guest the host's channels a moment before they can send, and drops what is sent in that moment | The guest's link opens only once the host has been heard (its hello), or after a second, so the guest's own hello always arrives |
 | A link drops unasked | Both phones go straight back into the handshake on the same sides, lobby state kept (§6) |
 | Any drop | Link Lost (or the Reconnecting banner) says why, when, how long the line had been quiet and whether either phone had left the screen (see below) |
 | A match history too long for one message | Streamed after `hello` in paced chunks; a drop mid-stream keeps what arrived |
