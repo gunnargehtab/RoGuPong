@@ -104,6 +104,64 @@ const MAX_CANDIDATES = 6;
  */
 export const isInternet = (c) => c.type === 'srflx';
 
+/** 'mdns' for a local address hidden behind a name, else 'v4' or 'v6'. */
+export function familyOf(c) {
+  if (/\.local$/i.test(c.address)) return 'mdns';
+  return c.address.includes(':') ? 'v6' : 'v4';
+}
+
+/**
+ * The kind of network a candidate came from, by the cost Chrome writes on its
+ * line: 'wired' (no cost written), 'wifi', 'other' (an interface it can't
+ * place — a phone's own hotspot, a USB tether), 'cell' (mobile data), 'any'
+ * (just the default route, before the page may list the phone's networks:
+ * until the camera is allowed). null when the candidate says nothing — every
+ * other browser, and the candidates rebuilt from a compact code.
+ */
+export function networkOf(c) {
+  const cost = c.cost;
+  if (cost == null) return null;
+  if (cost >= 999) return 'any';
+  if (cost >= 250) return 'cell';
+  if (cost >= 50) return 'other';
+  return cost >= 10 ? 'wifi' : 'wired';
+}
+
+/**
+ * The candidates worth a place in a code, best first — and a compact code
+ * holds six. A phone that may list its networks (Chrome on Android, once the
+ * camera is allowed) offers far more: IPv4 and IPv6 on the WiFi, the same
+ * again on mobile data, each with a TCP twin left out here. Chrome writes the
+ * IPv6 ones first and the internet address last, so its own order could fill
+ * the code with addresses no phone on the WiFi can reach and leave the
+ * internet address out altogether.
+ *
+ * Same WiFi: the local IPv4 addresses (or their mDNS names) go first, since
+ * those are what connect two phones on one network. Then one internet
+ * address, always: the way round when the two aren't on one network after
+ * all, or when the WiFi keeps phones apart but its router lets the traffic
+ * back in. Then local IPv6, any further internet addresses, and mobile data
+ * last — IPv6 first there, since a carrier's IPv4 address sits behind its
+ * NAT where nothing reaches it. Online, the internet addresses lead.
+ */
+export function codeOrder(candidates, online = false) {
+  const byCost = (a, b) => (a.cost ?? 0) - (b.cost ?? 0);
+  const v6 = (c) => familyOf(c) === 'v6';
+  const sorted = (list, v6First = false) => {
+    const s = [...list].sort(byCost);
+    const [one, two] = [s.filter((c) => v6(c) === v6First), s.filter((c) => v6(c) !== v6First)];
+    return [...one, ...two];
+  };
+  const host = candidates.filter((c) => c.type === 'host');
+  const local = sorted(host.filter((c) => networkOf(c) !== 'cell'));
+  const cell = sorted(host.filter((c) => networkOf(c) === 'cell'), true);
+  const nets = sorted(candidates.filter(isInternet));
+  if (online) return [...nets, ...local, ...cell];
+  const lan = local.filter((c) => !v6(c));
+  const head = lan.slice(0, MAX_CANDIDATES - 1);
+  return [...head, ...nets.slice(0, 1), ...lan.slice(head.length), ...local.filter(v6), ...nets.slice(1), ...cell];
+}
+
 function ipv4ToBytes(ip) {
   const p = ip.split('.').map(Number);
   return (p.length === 4 && p.every((n) => Number.isInteger(n) && n >= 0 && n < 256)) ? p : null;
@@ -188,28 +246,36 @@ function field(sdp, re) {
   return m ? m[1] : null;
 }
 
-/** Pull the handful of unique values out of a datachannel-only SDP. */
-export function dissect(sdp) {
-  const ufrag = field(sdp, /^a=ice-ufrag:(\S+)/m);
-  const pwd = field(sdp, /^a=ice-pwd:(\S+)/m);
-  const fp = field(sdp, /^a=fingerprint:sha-256 (\S+)/mi);
-  if (!ufrag || !pwd || !fp) throw new Error('SDP is missing ICE credentials');
-
+/**
+ * The UDP host and srflx candidates in an SDP, in its order, each with the
+ * network cost its line gives (null if none) — what a code can carry.
+ */
+export function listCandidates(sdp) {
   const candidates = [];
   const seen = new Set();
-  const re = /^a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ (\S+)/gmi;
+  const re = /^a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ (\S+)([^\r\n]*)/gmi;
   let m;
   while ((m = re.exec(sdp))) {
-    const [, , component, transport, , address, port, type] = m;
+    const [, , component, transport, , address, port, type, rest] = m;
     if (component !== '1') continue;                       // RTP component only
     if (transport.toLowerCase() !== 'udp') continue;       // TCP candidates are useless here
     if (type !== 'host' && type !== 'srflx') continue;
     const key = address + ':' + port;
     if (seen.has(key)) continue;
     seen.add(key);
-    candidates.push({ address, port: parseInt(port, 10), type });
+    const cost = / network-cost (\d+)/.exec(rest);
+    candidates.push({ address, port: parseInt(port, 10), type, cost: cost ? Number(cost[1]) : null });
   }
-  return { ufrag, pwd, fingerprint: fp, candidates };
+  return candidates;
+}
+
+/** Pull the handful of unique values out of a datachannel-only SDP. */
+export function dissect(sdp) {
+  const ufrag = field(sdp, /^a=ice-ufrag:(\S+)/m);
+  const pwd = field(sdp, /^a=ice-pwd:(\S+)/m);
+  const fp = field(sdp, /^a=fingerprint:sha-256 (\S+)/mi);
+  if (!ufrag || !pwd || !fp) throw new Error('SDP is missing ICE credentials');
+  return { ufrag, pwd, fingerprint: fp, candidates: listCandidates(sdp) };
 }
 
 const FMT_VERSION = 1;
@@ -227,14 +293,12 @@ function packCompact(sdp, role, stamp) {
   w.str(pwd);
   w.bytes(fpBytes);
 
-  // Local candidates first — on the same WiFi those are the ones that connect.
-  // Online it is the internet address that connects, so it goes first, where
-  // a phone with a pile of local addresses can't crowd it out of the code.
-  const first = stamp ? 'srflx' : 'host';
-  const ordered = [...candidates].sort((a, b) => (a.type === b.type ? 0 : a.type === first ? -1 : 1));
+  // Best first (codeOrder): on the same WiFi the local addresses that
+  // connect, with a place kept for the internet address; online the
+  // internet address leads.
   const packed = [];
   const probe = new Writer();
-  for (const c of ordered) {
+  for (const c of codeOrder(candidates, !!stamp)) {
     if (packed.length >= MAX_CANDIDATES) break;
     const before = probe.b.length;
     if (packCandidate(probe, c)) packed.push(c);

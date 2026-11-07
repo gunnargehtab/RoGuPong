@@ -555,6 +555,22 @@ differ are:
 Extracting exactly those, packing them binary, and Base32-encoding the result
 gives a **117-character code** that fits in a 41×41 QR — comfortably scannable
 at arm's length. The far side rebuilds a complete, valid SDP from a template.
+
+A compact code has room for **six candidates**, and that is usually plenty:
+one or two local addresses (mDNS names, before the page may list the phone's
+networks) and the internet address. Chrome on Android is the exception. It has
+no mDNS, and once the camera is allowed it lists every network the phone has:
+IPv4 and IPv6 on the WiFi, the same again on mobile data, a dozen addresses or
+more. Chrome writes the IPv6 ones first and the internet address last, and
+taking them in that order cut the internet address out of real codes
+altogether. So the code picks its six (`codeOrder`, reading the network cost
+Chrome writes on each line). On the same WiFi, the local IPv4 addresses go
+first, since they are what connect two phones on one network. One internet
+address always gets a place: it is the way round when the two aren't on one
+network after all, or when the WiFi keeps phones apart but its router lets the
+traffic back in. Local IPv6 comes next, and mobile data last. Online the
+internet address leads. Either way the format is unchanged, so an older build
+reads the codes exactly as before.
 Before trusting the compact form the encoder decodes its own output and checks
 that the credentials and fingerprint survived; if anything looks wrong it falls
 back to shipping the whole SDP deflate-compressed, which produces a denser code
@@ -648,11 +664,39 @@ route is found). After 12 s (25 s online) it says what to try and offers **Try
 again**. After 35 s (60 s online) it gives up. A guest waiting for the host to
 take its reply gets the same hint after 45 s (150 s online). A handshake that
 never connected ends on **Couldn't connect**, never on Link Lost. That screen
-says which side it was ("The connection never came up. Did the host scan your
-reply?") and offers Try again, which starts the same side over in the same
-mode. Time the page spends off screen while connecting doesn't count against
+says which side it was. A guest that heard back from the host's phone asks
+"Did the host scan your reply?", and one that heard nothing says so (below).
+It offers Try again, which starts the same side over in the same mode. Time the page spends off screen while connecting doesn't count against
 those limits: the page couldn't take its part meanwhile, and on iOS it is
 stopped outright.
+
+**What Couldn't connect can tell.** Every couple of seconds while connecting,
+each phone tallies its connectivity checks from `getStats()`: how many it
+sent, how many were answered, and how many arrived from the other phone. One
+fact makes the tally decisive. The host's phone answers the guest's checks the
+moment they arrive, before it has scanned the reply at all. So on a WiFi that
+lets the phones reach each other, the guest hears back within a second,
+scanned or not. A guest that hears nothing for 15 s, until its browser gives
+up, was never reachable. The screen says what got through ("Nothing, either
+way"), and the advice follows from what the phone saw, in this order:
+
+- **Not on the WiFi at all.** The phone lists only mobile-data addresses.
+- **On the WiFi, but sending over mobile data** (Android). The phone's only
+  internet address came over mobile data, which means the WiFi has no
+  internet. Android then sends everything that isn't tied to a network over
+  mobile data, and Chrome never ties WebRTC to one. The game's link leaves
+  over the wrong radio, and turning mobile data off fixes it. An iPhone keeps
+  traffic for the WiFi on the WiFi, so this one is Android's alone. Only
+  Chrome says which network an address is on, and only once the page may list
+  the phone's networks.
+- **On different networks.** Both codes show local IPv4 addresses, and they
+  don't share a network (a /24, or a /16 in the 10/8 and 172.16/12 ranges,
+  which offices and schools cut wider). One phone is on the guest WiFi and
+  the other on the main one, say.
+- **Nothing got through, either way.** The WiFi is keeping phones apart, as
+  guest and public networks often do. A personal hotspot on one phone, with
+  the other connected to it, gets around that.
+- Otherwise, the general advice.
 
 When a link that was up drops unasked, both phones go straight back into the
 handshake on the same sides, under a **Reconnecting** banner that says what
@@ -691,7 +735,7 @@ codes travelling through a chat app instead of a camera:
   invite is over 10 minutes old, and the host's own invite screen counts its
   invite's age and offers a fresh one past that. An invite can grow stale
   because the host's router may stop keeping its way in open. Same-WiFi codes
-  carry no trailer, and are byte for byte what they were.
+  carry no trailer, so a build from before online play reads them as ever.
 - **The paste is guided.** The invite goes out as a link with a line of text
   (Share or Copy), and tapping it opens the game and joins. The reply goes
   back as a short message the paste box finds the code in. The host's invite
@@ -1105,7 +1149,10 @@ but takes nothing back out of the league.
 | Compact SDP encoding not viable | Silently ships the full description, compressed |
 | ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
 | Camera denied while hosting | The preview is removed; share and paste still work |
-| WiFi has client isolation | Couldn't connect says the phones couldn't reach each other, with a note suggesting a hotspot, and offers Try again |
+| WiFi has client isolation | Couldn't connect says nothing got through, either way, suggests a personal hotspot, and offers Try again. The internet address in each code is the way round if the router lets the traffic back in (§6) |
+| An Android phone on a WiFi with no internet, with mobile data on | Android sends the game over mobile data. When this phone can see that (its only internet address came over mobile data), Couldn't connect says to turn mobile data off (§6) |
+| The two phones are on different networks | When both codes show local addresses that don't match, Couldn't connect says so (§6) |
+| A phone with a dozen addresses (Android, WiFi and mobile data, IPv4 and IPv6) | The code carries the six that matter most, and always one internet address (§6) |
 | A handshake hangs | Seconds count on "Connecting", a hint and Try again come up after 12 s (25 s online), and it gives up with Couldn't connect after 35 s (60 s online) (§6) |
 | Online, the networks can't be connected directly | Couldn't connect over the internet, with the advice to try a WiFi or a phone hotspot. There is no relay (§6) |
 | An online invite finds no internet address | Refused as NO INTERNET before anyone waits on it |
@@ -1195,8 +1242,15 @@ and frame rate, audio and wake-lock state), the friend's phone in a line (it
 rides in `hello`), and a log of the last 100 moments that matter: the page
 hiding and coming back, link and ICE states, drops, audio and wake-lock
 interruptions, storage refused or full, a share or clipboard read that failed,
-errors. Some of these moments are there for the iPhone questions that only a
-real device can settle. How each code arrived (a link, the in-game scanner, the
+errors. The link's line names the addresses each phone offered by network,
+for example "wifi v4+v6×2, cell v4+v6×2, internet v4 via wifi, 6 of 7 in the
+code". It also says whether the two phones' local addresses share a network,
+and, while connecting, how many checks went out, came back and came in. Chrome
+reports a link that never came up as ICE `disconnected` rather than `failed`
+(it remaps the state on purpose, crbug 957487), so `ice: disconnected` with
+`link: failed` in the log means the same as an iPhone's `ice: failed`. Some
+of these moments are there for the iPhone questions that only a real device
+can settle. How each code arrived (a link, the in-game scanner, the
 paste box, the clipboard) shows which ways iPhones actually use. Whether an
 invite link loaded a fresh page or reached one already running, and any other
 copy of the game open in the same browser, show where iOS sends a Camera-app

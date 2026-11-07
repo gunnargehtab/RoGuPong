@@ -22,7 +22,7 @@ import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
-import { log, logLines, clock, device, isIOS, inAppBrowser, watchOtherCopies } from './diag.js';
+import { log, logLines, clock, device, isIOS, isAndroid, inAppBrowser, watchOtherCopies } from './diag.js';
 
 // Screens with no stage of their own, drawn over the turning menu stage; the
 // lobby, the results, the pause and Link Lost screens show the match's.
@@ -113,6 +113,30 @@ const STEP_LABEL = {
 };
 const WIFI_HINT = 'Both phones need to stay on the same WiFi. Some guest networks block '
   + 'phones from talking to each other — a personal hotspot works around that.';
+// A same-WiFi handshake that never connected: what to try, picked from what
+// the handshake saw (App.wifiConnectHint).
+const WIFI_CONNECT_HINT = 'Both phones need to be on the same WiFi. Some guest networks block phones '
+  + 'from each other — a personal hotspot works around that. On an Android phone, turn mobile data '
+  + 'off if the WiFi has no internet.';
+const NOTHING_THROUGH_HINT = 'Nothing got through between the phones, either way. If both are on the '
+  + 'same WiFi with the game on screen, the WiFi is keeping phones apart, as guest and public '
+  + 'networks often do: turn on a personal hotspot on one phone, connect the other to it, and try '
+  + 'again. On an Android phone, also turn mobile data off if the WiFi has no internet.';
+const MOBILE_DATA_HINT = 'This phone reaches the internet over mobile data, not over the WiFi it is '
+  + 'on — which usually means the WiFi has no internet. Android then sends the game over mobile data '
+  + 'too, where the other phone can\'t hear it. Turn mobile data off on this phone and try again.';
+const NOT_ON_WIFI_HINT = 'This phone isn\'t on a WiFi, only mobile data. Connect it to the same WiFi '
+  + 'as the other phone and try again — or pick Online.';
+const OTHER_NETWORK_HINT = 'The two phones\' addresses say they are on different networks — one on '
+  + 'a guest WiFi, say, and one on the main one. Put both on the same WiFi and try again. On an '
+  + 'Android phone, also turn mobile data off if the WiFi has no internet: Android sends the game '
+  + 'over mobile data otherwise.';
+// What got through while a handshake was connecting, as Couldn't connect says it.
+const REACH_TEXT = {
+  both: 'Both ways',
+  theirs: 'From their phone only',
+  none: 'Nothing, either way',
+};
 const ONLINE_HINT = 'Some networks — mobile data especially — can\'t connect two phones directly, '
   + 'and there is no relay server in between to fall back on. Try again with one of you on a '
   + 'WiFi or a phone hotspot, and swap the codes promptly: the longer a reply waits to be '
@@ -1401,11 +1425,16 @@ class App {
       if (!opened) {
         // The friend's name only arrives once connected, so no names here.
         const host = p ? p.isHost : this.role === 'host';
+        // On a network that lets the phones reach each other, the host's
+        // phone answers the guest's checks before it has scanned the reply
+        // at all; nothing back means nothing got through.
         return this.online
           ? (host ? 'Couldn\'t connect over the internet.'
             : 'Couldn\'t connect over the internet — or the host never got your reply.')
           : (host ? 'The two phones couldn\'t reach each other.'
-            : 'The connection never came up. Did the host scan your reply?');
+            : p?.reach() === 'none'
+              ? 'Nothing came back from the host\'s phone: the two phones couldn\'t reach each other.'
+              : 'The connection never came up. Did the host scan your reply?');
       }
       const who = name || 'your friend';
       const Who = name || 'Your friend';
@@ -1430,13 +1459,16 @@ class App {
       );
     } else if (p) {
       facts.push(['Trying for', secs(now - p.createdAt)]);
+      const reach = p.reach();
+      if (reach) facts.push(['Got through', REACH_TEXT[reach]]);
     }
     facts.push(['Playing', this.online ? 'Online' : 'On the same WiFi']);
 
     const leftScreen = this.hiddenAt != null || this.theirHiddenAt != null
       || (this.lastAway && now - this.lastAway.back < 30000)
       || (this.theirLastAway && now - this.theirLastAway.back < 30000);
-    const netHint = !this.online ? WIFI_HINT : opened ? ONLINE_HINT : ONLINE_CONNECT_HINT;
+    const netHint = this.online ? (opened ? ONLINE_HINT : ONLINE_CONNECT_HINT)
+      : opened ? WIFI_HINT : this.wifiConnectHint(p);
     const hint = reason === 'bye' ? null : calledOff ? CALLED_OFF_HINT
       : opened && leftScreen ? AWAY_HINT : netHint;
 
@@ -1447,6 +1479,23 @@ class App {
       auto: opened && reason !== 'bye' && !calledOff,
       link: p ? this.linkSummary(p, now) : 'none',
     };
+  }
+
+  /**
+   * What to try after a same-WiFi handshake that never connected, from what
+   * it saw: this phone not on the WiFi, or on it but sending over mobile data
+   * (Android only — an iPhone keeps traffic for the WiFi on the WiFi); the
+   * two phones on different networks; or nothing getting through at all. The
+   * general advice when it can't tell.
+   */
+  wifiConnectHint(p) {
+    if (!p) return WIFI_CONNECT_HINT;
+    const trouble = p.wifiTrouble();
+    if (trouble === 'no-wifi') return NOT_ON_WIFI_HINT;
+    if (trouble === 'mobile-data' && isAndroid()) return MOBILE_DATA_HINT;
+    if (p.sameNetwork() === false) return OTHER_NETWORK_HINT;
+    if (p.reach() === 'none') return NOTHING_THROUGH_HINT;
+    return WIFI_CONNECT_HINT;
   }
 
   /**
@@ -1485,6 +1534,7 @@ class App {
   /** The connection in one line, for diagnostics. */
   linkSummary(p, now = performance.now()) {
     const age = p.openedAt ? `open ${secs(now - p.openedAt)}` : `connecting ${secs(now - p.createdAt)}`;
+    const same = p.sameNetwork();
     return [
       `${p.isHost ? 'host' : 'guest'}${p.online ? ' online' : ''}`,
       `${p.pc.connectionState} (ice ${p.pc.iceConnectionState})`,
@@ -1493,6 +1543,8 @@ class App {
       p.rtt ? `rtt ${p.rtt} ms (avg ${Math.round(p.rttAvg)})` : null,
       p.openedAt ? `their protocol ${this.theirProtocol ?? '?'}` : null,
       p.candidates(),
+      same == null ? null : same ? 'same network' : 'different networks',
+      p.openedAt ? null : p.checksText(),
     ].filter(Boolean).join(' · ');
   }
 
@@ -1712,7 +1764,7 @@ class App {
     }
     if (!hs.slow && ms > slowAfter) {
       hs.slow = true;
-      log(`handshake: slow at the ${hs.stage} step`);
+      log(`handshake: slow at the ${hs.stage} step · ${p.checksText()}`);
       this.screens.showLater();
     }
     if (status) this.screens.tickStatus(status);
