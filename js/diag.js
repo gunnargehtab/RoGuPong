@@ -9,44 +9,64 @@
 // the phone any other way, bar that one-line description, which goes to the
 // friend's phone so its report can say what was on the other end.
 //
-// The log lives in sessionStorage, so it survives the reload iOS does when it
-// has thrown a tab away in the background — often the very moment worth seeing.
+// The log lives in localStorage and outlasts the session it describes. It
+// survives the reload iOS does when it has thrown a tab away in the background,
+// often the very moment worth seeing, and a game closed after a glitch: the
+// friend whose phone it was can still copy the report hours later. Each page
+// load starts with a line of its own, so the sessions stay apart.
 
 const KEY = 'rogupong.diag.v1';
-// Enough for an evening's session — the handshake, a string of matches and
-// whatever went wrong after them — without each write growing heavy.
-const MAX_ENTRIES = 100;
+// A couple of evenings' play: the handshakes, strings of matches and whatever
+// went wrong in between, without each write growing heavy.
+const MAX_ENTRIES = 200;
 
-let entries = load();
+let entries = stored() || [];
 
-function load() {
+/** The log as stored, or null when storage is out of reach. */
+function stored() {
   try {
-    const list = JSON.parse(sessionStorage.getItem(KEY) || '[]');
+    const list = JSON.parse(localStorage.getItem(KEY) || '[]');
     return Array.isArray(list) ? list.slice(-MAX_ENTRIES) : [];
   } catch {
-    return [];
+    return null;
   }
 }
 
 /** Note something that happened. For rare events only: every call is a storage write. */
 export function log(text) {
-  entries.push([Date.now(), String(text).slice(0, 200)]);
-  if (entries.length > MAX_ENTRIES) entries = entries.slice(-MAX_ENTRIES);
+  // Another copy of the game in this browser writes to the same log, so this
+  // adds to what is stored rather than writing this page's copy over it.
+  const list = stored() || entries;
+  list.push([Date.now(), String(text).slice(0, 200)]);
+  entries = list.slice(-MAX_ENTRIES);
   try {
-    sessionStorage.setItem(KEY, JSON.stringify(entries));
-  } catch { /* private mode, or storage off — the log still lives in memory */ }
+    localStorage.setItem(KEY, JSON.stringify(entries));
+  } catch { /* private mode, storage off or full: the log still lives in memory */ }
 }
+
+const two = (n) => String(n).padStart(2, '0');
 
 /** Wall-clock time to a tenth of a second, e.g. 14:03:12.4. */
 export function clock(ms = Date.now()) {
   const d = new Date(ms);
-  const two = (n) => String(n).padStart(2, '0');
   return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
 }
 
-/** The log as text, oldest first. */
+/** The local date, e.g. 2026-11-09: the day clock() belongs to. */
+export function day(ms = Date.now()) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+/** The log as text, oldest first, with a line for each day it covers. */
 export function logLines() {
-  return entries.map(([t, text]) => `${clock(t)} ${text}`);
+  const lines = [];
+  let last = null;
+  for (const [t, text] of stored() || entries) {
+    if (day(t) !== last) lines.push((last = day(t)));
+    lines.push(`${clock(t)} ${text}`);
+  }
+  return lines;
 }
 
 export function isIOS() {
@@ -69,6 +89,28 @@ export function inAppBrowser() {
   if (/FBAN|FBAV|Instagram|Snapchat|musical_ly|Line\//.test(ua)) return true;
   if (isIOS()) return !navigator.standalone && !/Safari\//.test(ua);
   return /Android/.test(ua) && /; wv\)/.test(ua);
+}
+
+/**
+ * The browser on an iPhone that iOS makes ask before it reaches other devices
+ * on the WiFi: any but Safari. Since iOS 14 an app needs Local Network access
+ * for that (Settings → Privacy & Security → Local Network), and Chrome, Firefox
+ * and the rest are apps like any other there, though Safari's engine runs them.
+ * Until it is allowed, iOS stops the game's checks to the other phone, so a
+ * same-WiFi link never comes up. Safari never asks, nor does a copy of the game
+ * on the home screen. Returns the browser's name for the advice, 'this app' for
+ * a chat app's own browser, or null where nothing stands in the way. The
+ * permission itself is out of a page's reach: this says only that it applies.
+ */
+export function localNetworkGate() {
+  if (!isIOS() || navigator.standalone) return null;
+  const ua = navigator.userAgent;
+  const named = [
+    [/CriOS\//, 'Chrome'], [/FxiOS\//, 'Firefox'], [/EdgiOS\//, 'Edge'], [/OPiOS\/|OPT\//, 'Opera'],
+    [/DuckDuckGo\/|Ddg\//, 'DuckDuckGo'], [/GSA\//, 'the Google app'],
+  ];
+  for (const [re, name] of named) if (re.test(ua)) return name;
+  return inAppBrowser() ? 'this app' : null;
 }
 
 /**

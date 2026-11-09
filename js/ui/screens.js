@@ -17,7 +17,7 @@ import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
 import * as cloud from '../data/cloud.js';
-import { isIOS, inAppBrowser } from '../diag.js';
+import { isIOS, inAppBrowser, localNetworkGate } from '../diag.js';
 import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
 import { iconCanvas, ICON_FOR_ACTION } from './icons.js';
 import { badgeCanvas } from './badges.js';
@@ -159,6 +159,21 @@ function inAppNote() {
   return `<small class="warn" style="display:block;margin-top:8px"><b>This opened inside another
     app.</b> Leaving it to send a code closes the game, so open this page in ${browser} first:
     the app&rsquo;s &middot;&middot;&middot; or share menu &rarr; Open in ${browser}.</small>`;
+}
+
+/**
+ * An iPhone browser other than Safari asks iOS's leave before it reaches the
+ * other phone on the WiFi (diag.js localNetworkGate), with a system prompt
+ * that comes up over the game mid-handshake. Said before it does, so it gets
+ * an Allow. A chat app's own browser gets the open-in-Safari note instead.
+ */
+function localNetworkNote() {
+  const name = localNetworkGate();
+  if (!name || name === 'this app') return '';
+  const Name = name[0].toUpperCase() + name.slice(1);
+  return `<small class="warn" style="display:block;margin-top:8px"><b>${esc(Name)} on iPhone:</b>
+    when it asks to find devices on your local network, tap <b>Allow</b> &mdash; without that it
+    can&rsquo;t reach the other phone.</small>`;
 }
 
 /**
@@ -863,12 +878,12 @@ export class Screens {
       </details>${inAppNote()}` : `
       <p>Both phones on the <b>same WiFi</b>. One hosts, the other joins.</p>
       <p style="margin-top:8px"><small><b>iPhone?</b> Let the Android phone host; the
-      iPhone joins straight from its Camera app.</small></p>
+      iPhone joins straight from its Camera app.</small>${localNetworkNote()}</p>
       <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
         <button class="btn" data-action="host">Host a match</button>
         <button class="btn secondary" data-action="join">Join a match</button>
       </div>
-      ${scannerSupported() ? '' :
+      ${scannerSupported() || isIOS() ? '' :
         '<p class="warn" style="margin-top:10px">This browser has no QR scanner, so you will be swapping codes by copy and paste. Chrome on Android has one.</p>'}`;
     wrap.appendChild(panel);
 
@@ -1076,7 +1091,7 @@ export class Screens {
         step: 2,
         instruction: online
           ? 'Got the reply. Finding a way through to your friend&rsquo;s phone&hellip;'
-          : 'Got the reply. Shaking hands over the WiFi&hellip;',
+          : 'Got the reply. Shaking hands over the WiFi&hellip;' + localNetworkNote(),
         status: { text: 'Connecting', kind: 'warn', pulse: true },
         later: `<p><small>${online
           ? 'This is taking a while. Your friend&rsquo;s game has to be open on their screen to '
@@ -1221,13 +1236,16 @@ export class Screens {
         step: 1,
         // An iPhone stops a page the moment it leaves the screen, so a reply
         // sent from the chat app is only answered once its sender is back.
+        // On the same WiFi this is where an iPhone browser's local-network
+        // prompt comes up: the reply is made, and its checks go out.
         instruction: (online
           ? 'Now send this reply back to your friend straight away &mdash; tap <b>Share reply</b> and '
             + 'pick your chat &mdash; then <b>come back here</b> and keep this screen open. The games '
             + 'connect the moment they paste it, but only while yours is on screen to answer.'
             + inAppNote()
           : 'Now show <b>this</b> code to the host — their camera is already '
-            + 'looking for it. If they can&rsquo;t scan, send it to them instead.') + stale,
+            + 'looking for it. If they can&rsquo;t scan, send it to them instead.'
+            + localNetworkNote()) + stale,
         code: data.code,
         extra: who,
         status: {
