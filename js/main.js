@@ -22,7 +22,9 @@ import { Scanner, scannerSupported } from './net/scanner.js';
 import * as lb from './data/leaderboard.js';
 import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
-import { log, logLines, clock, device, isIOS, isAndroid, inAppBrowser, watchOtherCopies } from './diag.js';
+import {
+  log, logLines, clock, day, device, isIOS, isAndroid, inAppBrowser, localNetworkGate, watchOtherCopies,
+} from './diag.js';
 
 // Screens with no stage of their own, drawn over the turning menu stage; the
 // lobby, the results, the pause and Link Lost screens show the match's.
@@ -118,10 +120,35 @@ const WIFI_HINT = 'Both phones need to stay on the same WiFi. Some guest network
 const WIFI_CONNECT_HINT = 'Both phones need to be on the same WiFi. Some guest networks block phones '
   + 'from each other — a personal hotspot works around that. On an Android phone, turn mobile data '
   + 'off if the WiFi has no internet.';
-const NOTHING_THROUGH_HINT = 'Nothing got through between the phones, either way. If both are on the '
-  + 'same WiFi with the game on screen, the WiFi is keeping phones apart, as guest and public '
-  + 'networks often do: turn on a personal hotspot on one phone, connect the other to it, and try '
-  + 'again. On an Android phone, also turn mobile data off if the WiFi has no internet.';
+// The other phone can't tell what its friend runs until they connect, so this
+// one names the iPhone browsers that need letting onto the local network too.
+const NOTHING_THROUGH_HINT = 'Nothing got through between the phones, either way. An iPhone playing '
+  + 'in Chrome, or any browser but Safari, has to be allowed onto the local network first: '
+  + 'Settings → Privacy & Security → Local Network. Otherwise, if both phones are on the same WiFi '
+  + 'with the game on screen, the WiFi is keeping them apart, as guest and public networks often '
+  + 'do: turn on a personal hotspot on one phone, connect the other to it, and try again. On an '
+  + 'Android phone, also turn mobile data off if the WiFi has no internet.';
+
+/**
+ * Same WiFi and nothing through, on an iPhone in a browser other than Safari
+ * (diag.js localNetworkGate): iOS keeps that browser off the WiFi's other
+ * devices until it is allowed onto the local network. The handshake that
+ * first tries is the one that asks, and may fail even when it gets an Allow.
+ */
+function localNetworkHint(name) {
+  if (name === 'this app') {
+    return 'This page opened inside another app, and iOS keeps an app away from the other phone '
+      + 'on the WiFi unless it is allowed onto the local network. Open the game in Safari — the '
+      + 'app\'s ··· or share menu → Open in Safari — and try again there.';
+  }
+  const Name = name[0].toUpperCase() + name.slice(1);
+  return `${Name} on an iPhone has to be allowed onto the local network before it can reach the `
+    + `other phone. If it just asked to find devices on your local network, tap Allow and try `
+    + `again. If you turned it down: Settings → Privacy & Security → Local Network, turn ${name} `
+    + `on, and try again. Safari never needs this, so playing in Safari works too. If ${name} was `
+    + 'allowed all along, the WiFi may be keeping the phones apart — a personal hotspot gets '
+    + 'around that.';
+}
 const MOBILE_DATA_HINT = 'This phone reaches the internet over mobile data, not over the WiFi it is '
   + 'on — which usually means the WiFi has no internet. Android then sends the game over mobile data '
   + 'too, where the other phone can\'t hear it. Turn mobile data off on this phone and try again.';
@@ -1485,8 +1512,9 @@ class App {
    * What to try after a same-WiFi handshake that never connected, from what
    * it saw: this phone not on the WiFi, or on it but sending over mobile data
    * (Android only — an iPhone keeps traffic for the WiFi on the WiFi); the
-   * two phones on different networks; or nothing getting through at all. The
-   * general advice when it can't tell.
+   * two phones on different networks; an iPhone browser that iOS keeps off
+   * the local network, whose own checks never leave; or nothing getting
+   * through at all. The general advice when it can't tell.
    */
   wifiConnectHint(p) {
     if (!p) return WIFI_CONNECT_HINT;
@@ -1494,7 +1522,10 @@ class App {
     if (trouble === 'no-wifi') return NOT_ON_WIFI_HINT;
     if (trouble === 'mobile-data' && isAndroid()) return MOBILE_DATA_HINT;
     if (p.sameNetwork() === false) return OTHER_NETWORK_HINT;
-    if (p.reach() === 'none') return NOTHING_THROUGH_HINT;
+    const reach = p.reach();
+    const gate = localNetworkGate();
+    if (gate && (reach === 'none' || reach === 'theirs')) return localNetworkHint(gate);
+    if (reach === 'none') return NOTHING_THROUGH_HINT;
     return WIFI_CONNECT_HINT;
   }
 
@@ -1558,11 +1589,15 @@ class App {
     const d = this.lastDrop;
     const zoom = window.visualViewport?.scale || 1;
     const session = navigator.audioSession?.type;
+    const gate = localNetworkGate();
     const lines = [
-      `RoGuPong diagnostics · ${new Date().toISOString().slice(0, 10)} ${clock()}`,
+      `RoGuPong diagnostics · ${day()} ${clock()}`,
       `build: protocol ${PROTOCOL}`,
       `device: ${device()}`,
       `browser: ${navigator.userAgent}`,
+      // Whether it is allowed is out of a page's reach; that it has to be isn't.
+      ...(gate ? [`local network: ${gate} has to be allowed onto it (iOS Settings → Privacy & Security → `
+        + 'Local Network), or no same-WiFi link comes up; a page can\'t see whether it is'] : []),
       `screen: ${r.W}x${r.H} at ${window.devicePixelRatio || 1}x, canvas ${r.dpr}x · `
         + `safe area ${s.top}/${s.right}/${s.bottom}/${s.left} (top/right/bottom/left)`,
       `graphics: ${graphics}${why ? ` (${why})` : ''} · ${this.fps ? this.fps + ' fps' : 'fps not measured yet'}`,

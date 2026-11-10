@@ -89,6 +89,11 @@ moment it lands in the box.
 > invite link — long-press the Camera's banner, or have it sent as a message —
 > and paste it there. On an iPhone the game's sound follows the silent switch.
 
+> **On an iPhone in Chrome, or any browser but Safari, tap Allow** when it asks
+> to find devices on your local network. Until you do, iOS keeps it from
+> reaching the other phone on the WiFi. If you said no, turn it on under
+> Settings → Privacy & Security → Local Network. Safari never asks.
+
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
 > the link never comes up, put one phone on a personal hotspot and connect the
@@ -114,7 +119,8 @@ moment it lands in the box.
 > Link Lost offers **Reconnect** instead. **Copy diagnostics** (on those
 > screens, and at the foot of the title screen) copies the details of the
 > phone, which phone your friend had, and what just happened, ready to paste
-> into an issue. A brief WiFi
+> into an issue. It keeps the last couple of sessions, so it still works
+> hours after the glitch, game closed in between. A brief WiFi
 > hiccup doesn't end the session: the game waits at least ten seconds for the
 > link to come back.
 

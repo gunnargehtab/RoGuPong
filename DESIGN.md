@@ -636,6 +636,24 @@ the manifest's SVG, and the game ships no images — so on iPhones it paints
 `icon.svg` into a 180 px canvas at startup and links that, for Add to Home
 Screen to find.
 
+An iPhone browser other than Safari meets one more gate. Since iOS 14 an app
+has to be allowed onto the local network before it reaches other devices on
+the WiFi (Settings → Privacy & Security → Local Network). Chrome, Firefox,
+Edge and the rest are apps like any other there, though Safari's engine runs
+them. iOS asks the first time one tries, which for the game is mid-handshake,
+as its checks go out to the other phone. Until the browser is allowed, iOS
+stops those checks. Nothing gets through either way, which looks just like a
+WiFi that keeps phones apart, but a hotspot doesn't help. The handshake that
+sets off the question may fail even after an Allow, and a refusal holds until
+the switch is turned on in Settings. Safari never asks, nor does a copy of
+the game on the home screen. So on an iPhone in another browser
+(`localNetworkGate()` in `diag.js`, by its user agent), the connect screen,
+the reply screen and the host's wait for the link all say to tap Allow when
+asked. When nothing got through, Couldn't connect leads with the Settings
+switch. The other phone can't tell what its friend runs before they connect,
+so its own nothing-got-through advice names the case too. The diagnostics say
+when the gate applies. Whether it is open is out of a page's reach.
+
 Online, a phone's own camera plays no part, and two more iPhone traits
 matter. An iPhone stops a page the moment it leaves the screen, WebRTC
 included, so a guest who switches to the chat app to send its reply can't
@@ -693,9 +711,15 @@ way"), and the advice follows from what the phone saw, in this order:
   don't share a network (a /24, or a /16 in the 10/8 and 172.16/12 ranges,
   which offices and schools cut wider). One phone is on the guest WiFi and
   the other on the main one, say.
+- **An iPhone browser that isn't Safari, and nothing back.** iOS keeps
+  Chrome and the rest off the local network until they're allowed (see
+  *iPhones*). On such an iPhone the advice is the Settings switch first, then
+  Safari, then a hotspot.
 - **Nothing got through, either way.** The WiFi is keeping phones apart, as
   guest and public networks often do. A personal hotspot on one phone, with
-  the other connected to it, gets around that.
+  the other connected to it, gets around that. An iPhone friend in a browser
+  other than Safari would look the same from here, so this advice names that
+  case first.
 - Otherwise, the general advice.
 
 When a link that was up drops unasked, both phones go straight back into the
@@ -1145,11 +1169,12 @@ but takes nothing back out of the league.
 
 | What goes wrong | What the game does |
 | --- | --- |
-| No camera / no Barcode Detection API | Falls back to copy-and-paste codes, and says so up front |
+| No camera / no Barcode Detection API | Falls back to copy-and-paste codes, and says so up front. An iPhone is told to join with its Camera app instead (§6) |
 | Compact SDP encoding not viable | Silently ships the full description, compressed |
 | ICE gathering stalls (no internet) | Settled 0.4 s after the last candidate (3 s hard cap); local candidates are enough |
 | Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Couldn't connect says nothing got through, either way, suggests a personal hotspot, and offers Try again. The internet address in each code is the way round if the router lets the traffic back in (§6) |
+| An iPhone browser other than Safari, not (yet) allowed onto the local network | iOS stops its checks to the other phone. The connect, reply and host-waiting screens say to tap Allow when iOS asks, Couldn't connect names the Settings switch, and the other phone's advice names the case too (§6) |
 | An Android phone on a WiFi with no internet, with mobile data on | Android sends the game over mobile data. When this phone can see that (its only internet address came over mobile data), Couldn't connect says to turn mobile data off (§6) |
 | The two phones are on different networks | When both codes show local addresses that don't match, Couldn't connect says so (§6) |
 | A phone with a dozen addresses (Android, WiFi and mobile data, IPv4 and IPv6) | The code carries the six that matter most, and always one internet address (§6) |
@@ -1239,8 +1264,10 @@ from before them never send them, so nothing but the pause and the diagnostics
 depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
 the title screen, copies that with a description of the phone (browser,
 home-screen app, a chat app's own browser or a tab, safe area, zoom, graphics
-and frame rate, audio and wake-lock state), the friend's phone in a line (it
-rides in `hello`), and a log of the last 100 moments that matter: the page
+and frame rate, audio and wake-lock state, and on an iPhone in a browser other
+than Safari, that it has to be allowed onto the local network), the friend's
+phone in a line (it rides in `hello`), and a log of the last 200 moments that
+matter: the page
 hiding and coming back, link and ICE states, drops, audio and wake-lock
 interruptions, storage refused or full, a share or clipboard read that failed,
 errors. The link's line names the addresses each phone offered by network,
@@ -1259,8 +1286,12 @@ invite. A page hidden mid-match logs where the last touch began and how it
 ended: a swipe on the home indicator would begin at the bottom edge and be
 cancelled as iOS takes it over. A pinch zoom is logged, since iOS allows one
 whatever the viewport asks.
-The log lives in `sessionStorage`, so it survives the reload iOS does after
-throwing a background tab away. No player names go in it, nor in the report's
+The log lives in `localStorage` and spans sessions, with a line for each day.
+It survives the reload iOS does after throwing a background tab away, and a
+game closed after a glitch. A friend whose phone it was can still copy the
+report hours later, without having to think of it at the time. Two copies of
+the game in one browser add to the same log rather than overwrite each other's.
+No player names go in it, nor in the report's
 account of the last drop, because reports get pasted into public issues. From
 iOS 26 Safari's user agent stops counting the system version at 18.6, so the
 report reads it from Safari's own version, which now matches it.
