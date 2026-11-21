@@ -94,6 +94,14 @@ moment it lands in the box.
 > reaching the other phone on the WiFi. If you said no, turn it on under
 > Settings → Privacy & Security → Local Network. Safari never asks.
 
+> **On Android 17 or newer, allow Chrome to reach nearby devices:** Settings →
+> Apps → Chrome → Permissions → Nearby devices → Allow. Android keeps Chrome
+> away from the other phone on the WiFi until then, and nothing asks for it
+> while you connect. Do it on both phones: one without it stops both, on any
+> WiFi and on a hotspot too. The same goes for a copy of the game installed
+> from Chrome. If Chrome itself asks whether the game may reach devices on your
+> local network, allow that as well.
+
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
 > the link never comes up, put one phone on a personal hotspot and connect the

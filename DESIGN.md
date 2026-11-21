@@ -654,6 +654,38 @@ switch. The other phone can't tell what its friend runs before they connect,
 so its own nothing-got-through advice names the case too. The diagnostics say
 when the gate applies. Whether it is open is out of a page's reach.
 
+**Android 17 has the same gate, and it is quieter.** An app built for Android
+17 is kept off the local network, UDP and TCP, in and out, until it holds the
+Nearby devices permission (Settings → Apps → the browser → Permissions).
+Chrome is such an app, and a game installed from Chrome runs inside it. Without
+the permission the game's checks never leave the phone and the other phone's
+never arrive. Nothing gets through either way, on any WiFi and on a hotspot,
+and one such phone is enough to stop both. Unlike iOS, nothing asks for it
+mid-handshake, so games that worked the week before simply stop once a phone
+takes the Android 17 update. The reports of November 2026 fit that: the link
+code hadn't changed since September, and both phones sent some 230 checks
+that nothing answered. Those reports couldn't show the phones' Android
+version, though, so it stays the likely cause and not a proven one. Chrome's
+user agent says "Android 10" on every phone, which is why the real version
+now comes from the client hints at startup (`primeDevice()` in `diag.js`). On Android 17 or newer
+(`nearbyDevicesGate()`), a Couldn't connect where nothing got through leads
+with the Settings switch, and the other phone's advice names the case. A page
+can't see whether the permission is held, so the WiFi keeping the phones apart
+stays in the advice as the other reading.
+
+**Chrome's own local-network permission** is a third gate, per site and not
+per app. Where Chrome applies it to WebRTC (a switch in Chrome 153, off by
+default there), a page on the internet may only reach an address on the local
+network once its site is allowed, and Chrome asks the first time, as the
+other phone's code is taken. A site that was turned down has the other phone's
+WiFi addresses dropped from every handshake without a word: no checks go out
+and the link never leaves `new`. This one a page can read
+(`navigator.permissions`, `local-network`). So when it says denied, the
+connect, reply and host-waiting screens say so before a handshake is wasted
+on it, a toast says so when it happens mid-handshake, and Couldn't connect
+leads with how to allow the site. The diagnostics give its state, and log
+each change.
+
 Online, a phone's own camera plays no part, and two more iPhone traits
 matter. An iPhone stops a page the moment it leaves the screen, WebRTC
 included, so a guest who switches to the chat app to send its reply can't
@@ -711,15 +743,22 @@ way"), and the advice follows from what the phone saw, in this order:
   don't share a network (a /24, or a /16 in the 10/8 and 172.16/12 ranges,
   which offices and schools cut wider). One phone is on the guest WiFi and
   the other on the main one, say.
+- **The browser has the game blocked from the local network.** Chrome's
+  permission for the site says denied (see *iPhones*). The advice is where to
+  allow it. This comes ahead of the networks' own verdict, since the
+  addresses the phones had in common were never tried.
 - **An iPhone browser that isn't Safari, and nothing back.** iOS keeps
   Chrome and the rest off the local network until they're allowed (see
   *iPhones*). On such an iPhone the advice is the Settings switch first, then
   Safari, then a hotspot.
+- **Android 17 or newer, and nothing got through.** Android keeps the browser
+  off the local network until it holds Nearby devices (see *iPhones*). The
+  advice is the Settings switch on both phones first, then a hotspot.
 - **Nothing got through, either way.** The WiFi is keeping phones apart, as
   guest and public networks often do. A personal hotspot on one phone, with
-  the other connected to it, gets around that. An iPhone friend in a browser
-  other than Safari would look the same from here, so this advice names that
-  case first.
+  the other connected to it, gets around that. A friend on Android 17
+  without Nearby devices, or on an iPhone in a browser other than Safari,
+  would look the same from here, so this advice names those cases first.
 - Otherwise, the general advice.
 
 When a link that was up drops unasked, both phones go straight back into the
@@ -1175,6 +1214,8 @@ but takes nothing back out of the league.
 | Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Couldn't connect says nothing got through, either way, suggests a personal hotspot, and offers Try again. The internet address in each code is the way round if the router lets the traffic back in (§6) |
 | An iPhone browser other than Safari, not (yet) allowed onto the local network | iOS stops its checks to the other phone. The connect, reply and host-waiting screens say to tap Allow when iOS asks, Couldn't connect names the Settings switch, and the other phone's advice names the case too (§6) |
+| A phone on Android 17 or newer whose browser doesn't hold Nearby devices | Android stops its checks and the other phone's. Nothing asks for the permission. Couldn't connect leads with the Settings switch on that phone, and the other phone's advice names the case (§6) |
+| The browser has the game turned down for the local network (Chrome's site permission) | Chrome drops the other phone's WiFi addresses and no checks go out. The connect screens say so beforehand, a toast when it happens mid-handshake, and Couldn't connect says where to allow it (§6) |
 | An Android phone on a WiFi with no internet, with mobile data on | Android sends the game over mobile data. When this phone can see that (its only internet address came over mobile data), Couldn't connect says to turn mobile data off (§6) |
 | The two phones are on different networks | When both codes show local addresses that don't match, Couldn't connect says so (§6) |
 | A phone with a dozen addresses (Android, WiFi and mobile data, IPv4 and IPv6) | The code carries the six that matter most, and always one internet address (§6) |
@@ -1264,8 +1305,10 @@ from before them never send them, so nothing but the pause and the diagnostics
 depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the foot of
 the title screen, copies that with a description of the phone (browser,
 home-screen app, a chat app's own browser or a tab, safe area, zoom, graphics
-and frame rate, audio and wake-lock state, and on an iPhone in a browser other
-than Safari, that it has to be allowed onto the local network), the friend's
+and frame rate, audio and wake-lock state, the real Android version, and where
+a local-network gate applies — an iPhone browser other than Safari, any
+browser on Android 17, Chrome's permission for the site — that it does), the
+friend's
 phone in a line (it rides in `hello`), and a log of the last 200 moments that
 matter: the page
 hiding and coming back, link and ICE states, drops, audio and wake-lock

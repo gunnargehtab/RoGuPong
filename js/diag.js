@@ -77,6 +77,63 @@ export function isIOS() {
 
 export const isAndroid = () => /Android/.test(navigator.userAgent);
 
+// What a page has to ask the browser for (primeDevice): the Android version,
+// e.g. "17.0.0", and Chrome's own local-network permission for this site.
+let android = null;
+let sitePermission = null;
+
+/**
+ * Ask, once at startup, for the two things about the phone that decide
+ * whether a same-WiFi link can come up and that nothing else gives away.
+ *
+ * The Android version: Chrome's user agent says "Android 10; K" on every
+ * phone, whatever it runs, and only the client hints give the real one.
+ *
+ * Chrome's local-network permission for this site. Where Chrome asks for it
+ * before a page may reach an address on the local network, a site that was
+ * turned down has those addresses dropped from every handshake without a
+ * word. Its changes are logged, and passed to `onLocalNetwork`: a prompt
+ * answered mid-handshake shows up as one.
+ */
+export async function primeDevice(onLocalNetwork = () => {}) {
+  try {
+    const hints = navigator.userAgentData;
+    if (hints?.platform === 'Android') {
+      const { platformVersion } = await hints.getHighEntropyValues(['platformVersion']);
+      if (platformVersion) android = String(platformVersion);
+    }
+  } catch { /* a browser that doesn't say */ }
+  // The permission was one name, then two: the old name still answers.
+  for (const name of ['local-network', 'local-network-access']) {
+    try {
+      const status = await navigator.permissions.query({ name });
+      sitePermission = status.state;
+      if (status.state === 'denied') log('local network: the browser has this site blocked from it');
+      status.onchange = () => {
+        sitePermission = status.state;
+        log(`local network: the browser's permission for this site is now ${status.state}`);
+        onLocalNetwork(status.state);
+      };
+      return;
+    } catch { /* not a permission this browser has */ }
+  }
+}
+
+/** The Android version as a number, or null where nothing gives the real one. */
+export function androidVersion() {
+  if (android) return parseFloat(android);
+  const v = navigator.userAgent.match(/Android (\d+(?:\.\d+)?)(; K\))?/);
+  // "Android 10; K" is the frozen string, not a phone on Android 10.
+  return v && !(v[1] === '10' && v[2]) ? parseFloat(v[1]) : null;
+}
+
+/**
+ * Chrome's own permission for this site to reach the local network:
+ * 'granted', 'denied', 'prompt' (not asked yet), or null in a browser without
+ * one. Not the phone's permission for the browser (nearbyDevicesGate).
+ */
+export const localNetworkPermission = () => sitePermission;
+
 /**
  * Opened inside another app — a chat app's built-in browser, not the phone's
  * own. It keeps a storage of its own, and closing it to get back to the chat
@@ -111,6 +168,25 @@ export function localNetworkGate() {
   ];
   for (const [re, name] of named) if (re.test(ua)) return name;
   return inAppBrowser() ? 'this app' : null;
+}
+
+/**
+ * Android's version of the same gate. From Android 17 an app built for it is
+ * kept off the local network — other devices on the WiFi, UDP and TCP, in and
+ * out — until it holds the Nearby devices permission (Settings → Apps → the
+ * browser → Permissions). Chrome is such an app, and a game installed from
+ * Chrome runs inside it. Without the permission the game's checks never
+ * leave the phone and the other phone's never arrive: nothing gets through
+ * either way, on any WiFi, and a hotspot doesn't help. Nothing asks for it
+ * mid-handshake the way iOS does, and a page can't see whether it is held.
+ * Returns the browser's name for the advice ('this app' for a chat app's own
+ * browser), or null on an older Android or one whose version isn't known.
+ */
+export function nearbyDevicesGate() {
+  if (!isAndroid() || (androidVersion() ?? 0) < 17) return null;
+  if (inAppBrowser()) return 'this app';
+  const name = browserName(navigator.userAgent).replace(/ \d+$/, '');
+  return name === 'unknown browser' ? 'the browser' : name;
 }
 
 /**
@@ -176,8 +252,10 @@ export function device() {
     if (safari && parseFloat(safari[1]) >= 26) parts.push(`iOS ${safari[1]}`);
     else if (v) parts.push(`iOS ${v.slice(1).filter(Boolean).join('.')}`);
   } else {
-    const v = ua.match(/Android (\d+(?:\.\d+)?)/);
-    parts.push(v ? `Android ${v[1]}` : /Android/.test(ua) ? 'Android' : 'desktop');
+    // The real version where the browser gave it (primeDevice), and no number
+    // at all rather than the user agent's frozen "Android 10".
+    const v = android ? android.replace(/(\.0)+$/, '') : androidVersion();
+    parts.push(v ? `Android ${v}` : /Android/.test(ua) ? 'Android' : 'desktop');
   }
   parts.push(browserName(ua), displayMode());
   return parts.join(' · ');

@@ -17,7 +17,7 @@ import { scannerSupported } from '../net/scanner.js';
 import * as lb from '../data/leaderboard.js';
 import { findLeagueCode } from '../data/league.js';
 import * as cloud from '../data/cloud.js';
-import { isIOS, inAppBrowser, localNetworkGate } from '../diag.js';
+import { isIOS, inAppBrowser, localNetworkGate, localNetworkPermission } from '../diag.js';
 import { emoteCanvas, EMOTE_LABELS } from './emotes.js';
 import { iconCanvas, ICON_FOR_ACTION } from './icons.js';
 import { badgeCanvas } from './badges.js';
@@ -166,8 +166,18 @@ function inAppNote() {
  * other phone on the WiFi (diag.js localNetworkGate), with a system prompt
  * that comes up over the game mid-handshake. Said before it does, so it gets
  * an Allow. A chat app's own browser gets the open-in-Safari note instead.
+ *
+ * Any browser that has the game turned down for the local network (Chrome's
+ * own permission, diag.js localNetworkPermission) is told so here too: it
+ * would drop the other phone's WiFi addresses and wait for nothing.
  */
 function localNetworkNote() {
+  if (localNetworkPermission() === 'denied') {
+    return `<small class="warn" style="display:block;margin-top:8px"><b>This browser has the game
+      blocked from the local network</b>, so it can&rsquo;t reach the other phone on the WiFi.
+      Allow it first: the icon at the left of the address bar &rarr; Permissions &rarr; Local
+      network access.</small>`;
+  }
   const name = localNetworkGate();
   if (!name || name === 'this app') return '';
   const Name = name[0].toUpperCase() + name.slice(1);
