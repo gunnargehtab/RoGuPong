@@ -162,8 +162,8 @@ function localNetworkHint(name) {
 }
 
 /**
- * Same WiFi and nothing through, on Android 17 or newer (diag.js
- * nearbyDevicesGate): Android keeps the browser off the WiFi's other devices
+ * Same WiFi and nothing through, in Chrome on Android 17 or newer (diag.js
+ * nearbyDevicesGate): Android keeps Chrome off the WiFi's other devices
  * until it holds the Nearby devices permission, and nothing asks for it
  * mid-handshake. A page can't see whether it is held, so the WiFi keeping the
  * phones apart stays in as the other reading.
@@ -171,14 +171,16 @@ function localNetworkHint(name) {
 function nearbyDevicesHint(name) {
   if (name === 'this app') {
     return 'This page opened inside another app, and Android 17 keeps an app away from the other '
-      + 'phone on the WiFi unless it is allowed to reach nearby devices. Open the game in Chrome — '
-      + 'the app\'s ⋮ or share menu → Open in browser — and try again there.';
+      + 'phone on the WiFi unless it is allowed to reach nearby devices. Open the game in your '
+      + 'browser — the app\'s ⋮ or share menu → Open in browser — and try again there. Chrome '
+      + 'needs allowing too: Settings → Apps → Chrome → Permissions → Nearby devices.';
   }
   return `Nothing got through between the phones, either way. From Android 17, ${name} has to be `
     + `allowed to reach other devices on the WiFi, and it doesn't ask: Settings → Apps → ${name} → `
-    + 'Permissions → Nearby devices → Allow, then try again. Check the other phone the same way — '
-    + `one phone without it is enough to stop both. If ${name} was allowed all along, the WiFi may `
-    + 'be keeping the phones apart — a personal hotspot gets around that.';
+    + 'Permissions → Nearby devices → Allow, then try again. If the other phone plays in Chrome, '
+    + 'check it the same way — one phone without it is enough to stop both. If '
+    + `${name} was allowed all along, the WiFi may be keeping the phones apart — a personal `
+    + 'hotspot gets around that.';
 }
 const MOBILE_DATA_HINT = 'This phone reaches the internet over mobile data, not over the WiFi it is '
   + 'on — which usually means the WiFi has no internet. Android then sends the game over mobile data '
@@ -1552,8 +1554,8 @@ class App {
    * (Android only — an iPhone keeps traffic for the WiFi on the WiFi); the
    * two phones on different networks; a browser that has the game turned
    * down for the local network; an iPhone browser that iOS keeps off the
-   * local network, whose own checks never leave; a browser on Android 17,
-   * kept off it the same way; or nothing getting through at all. The general
+   * local network, whose own checks never leave; Chrome on Android 17, kept
+   * off it the same way; or nothing getting through at all. The general
    * advice when it can't tell.
    */
   wifiConnectHint(p) {

@@ -662,16 +662,20 @@ the permission the game's checks never leave the phone and the other phone's
 never arrive. Nothing gets through either way, on any WiFi and on a hotspot,
 and one such phone is enough to stop both. Unlike iOS, nothing asks for it
 mid-handshake, so games that worked the week before simply stop once a phone
-takes the Android 17 update. The reports of November 2026 fit that: the link
-code hadn't changed since September, and both phones sent some 230 checks
-that nothing answered. Those reports couldn't show the phones' Android
-version, though, so it stays the likely cause and not a proven one. Chrome's
-user agent says "Android 10" on every phone, which is why the real version
-now comes from the client hints at startup (`primeDevice()` in `diag.js`). On Android 17 or newer
+takes the Android 17 update. That is what the reports of November 2026 were:
+the link code hadn't changed since September, both phones sent some 230
+checks that nothing answered, and the next evening the pair connected at the
+first try once the host had allowed Chrome under Nearby devices. The friend
+played in Samsung Internet that time, without the permission. So it is the
+browser's build that decides, not the phone: Samsung Internet isn't built
+for Android 17 yet and has no such switch, and other browsers aren't known
+either way. Chrome's user agent says "Android 10" on every phone, which is
+why the real version now comes from the client hints at startup
+(`primeDevice()` in `diag.js`). In Chrome on Android 17 or newer
 (`nearbyDevicesGate()`), a Couldn't connect where nothing got through leads
-with the Settings switch, and the other phone's advice names the case. A page
-can't see whether the permission is held, so the WiFi keeping the phones apart
-stays in the advice as the other reading.
+with the Settings switch, and every other phone's nothing-got-through advice
+names the case. A page can't see whether the permission is held, so the WiFi
+keeping the phones apart stays in the advice as the other reading.
 
 **Chrome's own local-network permission** is a third gate, per site and not
 per app. Where Chrome applies it to WebRTC (a switch in Chrome 153, off by
@@ -751,13 +755,14 @@ way"), and the advice follows from what the phone saw, in this order:
   Chrome and the rest off the local network until they're allowed (see
   *iPhones*). On such an iPhone the advice is the Settings switch first, then
   Safari, then a hotspot.
-- **Android 17 or newer, and nothing got through.** Android keeps the browser
-  off the local network until it holds Nearby devices (see *iPhones*). The
-  advice is the Settings switch on both phones first, then a hotspot.
+- **Chrome on Android 17 or newer, and nothing got through.** Android keeps
+  Chrome off the local network until it holds Nearby devices (see
+  *iPhones*). The advice is the Settings switch on both phones first, then a
+  hotspot.
 - **Nothing got through, either way.** The WiFi is keeping phones apart, as
   guest and public networks often do. A personal hotspot on one phone, with
-  the other connected to it, gets around that. A friend on Android 17
-  without Nearby devices, or on an iPhone in a browser other than Safari,
+  the other connected to it, gets around that. A friend in Chrome on Android
+  17 without Nearby devices, or on an iPhone in a browser other than Safari,
   would look the same from here, so this advice names those cases first.
 - Otherwise, the general advice.
 
@@ -1214,7 +1219,7 @@ but takes nothing back out of the league.
 | Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Couldn't connect says nothing got through, either way, suggests a personal hotspot, and offers Try again. The internet address in each code is the way round if the router lets the traffic back in (§6) |
 | An iPhone browser other than Safari, not (yet) allowed onto the local network | iOS stops its checks to the other phone. The connect, reply and host-waiting screens say to tap Allow when iOS asks, Couldn't connect names the Settings switch, and the other phone's advice names the case too (§6) |
-| A phone on Android 17 or newer whose browser doesn't hold Nearby devices | Android stops its checks and the other phone's. Nothing asks for the permission. Couldn't connect leads with the Settings switch on that phone, and the other phone's advice names the case (§6) |
+| Chrome on Android 17 or newer, without the Nearby devices permission | Android stops its checks and the other phone's. Nothing asks for the permission. Couldn't connect leads with the Settings switch on that phone, and the other phone's advice names the case. Samsung Internet needs no permission so far (§6) |
 | The browser has the game turned down for the local network (Chrome's site permission) | Chrome drops the other phone's WiFi addresses and no checks go out. The connect screens say so beforehand, a toast when it happens mid-handshake, and Couldn't connect says where to allow it (§6) |
 | An Android phone on a WiFi with no internet, with mobile data on | Android sends the game over mobile data. When this phone can see that (its only internet address came over mobile data), Couldn't connect says to turn mobile data off (§6) |
 | The two phones are on different networks | When both codes show local addresses that don't match, Couldn't connect says so (§6) |
@@ -1306,8 +1311,8 @@ depends on hearing them. A **Copy diagnostics** button, on Link Lost and at the 
 the title screen, copies that with a description of the phone (browser,
 home-screen app, a chat app's own browser or a tab, safe area, zoom, graphics
 and frame rate, audio and wake-lock state, the real Android version, and where
-a local-network gate applies — an iPhone browser other than Safari, any
-browser on Android 17, Chrome's permission for the site — that it does), the
+a local-network gate applies — an iPhone browser other than Safari, Chrome
+on Android 17, Chrome's permission for the site — that it does), the
 friend's
 phone in a line (it rides in `hello`), and a log of the last 200 moments that
 matter: the page

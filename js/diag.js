@@ -179,14 +179,20 @@ export function localNetworkGate() {
  * leave the phone and the other phone's never arrive: nothing gets through
  * either way, on any WiFi, and a hotspot doesn't help. Nothing asks for it
  * mid-handshake the way iOS does, and a page can't see whether it is held.
- * Returns the browser's name for the advice ('this app' for a chat app's own
- * browser), or null on an older Android or one whose version isn't known.
+ *
+ * It is the browser's build that decides, not the phone, and a page can't
+ * see that either. So this goes by what has been seen on phones: Chrome
+ * needs the permission, and Samsung Internet connected without it on the
+ * same evening (November 2026) — it isn't built for Android 17 yet, and has
+ * no such switch to turn on. Other browsers aren't known either way, and get
+ * the general advice. Returns 'Chrome' ('this app' for a chat app's own
+ * browser), or null where the gate isn't known to apply: another browser, an
+ * older Android, or one whose version isn't known.
  */
 export function nearbyDevicesGate() {
   if (!isAndroid() || (androidVersion() ?? 0) < 17) return null;
   if (inAppBrowser()) return 'this app';
-  const name = browserName(navigator.userAgent).replace(/ \d+$/, '');
-  return name === 'unknown browser' ? 'the browser' : name;
+  return /^Chrome /.test(browserName(navigator.userAgent)) ? 'Chrome' : null;
 }
 
 /**

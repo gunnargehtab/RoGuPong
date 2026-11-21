@@ -99,8 +99,9 @@ moment it lands in the box.
 > away from the other phone on the WiFi until then, and nothing asks for it
 > while you connect. Do it on both phones: one without it stops both, on any
 > WiFi and on a hotspot too. The same goes for a copy of the game installed
-> from Chrome. If Chrome itself asks whether the game may reach devices on your
-> local network, allow that as well.
+> from Chrome. Samsung Internet needs no such switch so far. If Chrome itself
+> asks whether the game may reach devices on your local network, allow that
+> as well.
 
 > Some public and guest WiFi networks isolate clients from each other, which
 > blocks any direct phone-to-phone connection. If the handshake completes but
