@@ -668,14 +668,19 @@ checks that nothing answered, and the next evening the pair connected at the
 first try once the host had allowed Chrome under Nearby devices. The friend
 played in Samsung Internet that time, without the permission. So it is the
 browser's build that decides, not the phone: Samsung Internet isn't built
-for Android 17 yet and has no such switch, and other browsers aren't known
-either way. Chrome's user agent says "Android 10" on every phone, which is
-why the real version now comes from the client hints at startup
-(`primeDevice()` in `diag.js`). In Chrome on Android 17 or newer
-(`nearbyDevicesGate()`), a Couldn't connect where nothing got through leads
-with the Settings switch, and every other phone's nothing-got-through advice
-names the case. A page can't see whether the permission is held, so the WiFi
-keeping the phones apart stays in the advice as the other reading.
+for Android 17 yet and has no such switch. Edge and Brave are reported by
+others to need it like Chrome, which nobody has seen on a phone here, and
+Firefox and the rest aren't known either way. Chrome's user agent says
+"Android 10" on every phone, which is why the real version now comes from
+the client hints at startup (`primeDevice()` in `diag.js`). Brave's user
+agent is Chrome's to the letter, so it is told apart by `navigator.brave`.
+In Chrome, Edge or Brave on Android 17 or newer (`nearbyDevicesGate()`), a
+Couldn't connect where nothing got through leads with the Settings switch
+under the browser's own name, and every other phone's nothing-got-through
+advice names the case. A page can't see whether the permission is held, nor
+whether this build of the browser needs it at all (one that doesn't lists no
+such switch). So the advice says that too, and keeps the WiFi holding the
+phones apart as the other reading.
 
 **Chrome's own local-network permission** is a third gate, per site and not
 per app. Where Chrome applies it to WebRTC (a switch in Chrome 153, off by
@@ -755,10 +760,10 @@ way"), and the advice follows from what the phone saw, in this order:
   Chrome and the rest off the local network until they're allowed (see
   *iPhones*). On such an iPhone the advice is the Settings switch first, then
   Safari, then a hotspot.
-- **Chrome on Android 17 or newer, and nothing got through.** Android keeps
-  Chrome off the local network until it holds Nearby devices (see
-  *iPhones*). The advice is the Settings switch on both phones first, then a
-  hotspot.
+- **Chrome, Edge or Brave on Android 17 or newer, and nothing got through.**
+  Android keeps the browser off the local network until it holds Nearby
+  devices (see *iPhones*). The advice is the Settings switch on both phones
+  first, then a hotspot.
 - **Nothing got through, either way.** The WiFi is keeping phones apart, as
   guest and public networks often do. A personal hotspot on one phone, with
   the other connected to it, gets around that. A friend in Chrome on Android
@@ -1219,7 +1224,7 @@ but takes nothing back out of the league.
 | Camera denied while hosting | The preview is removed; share and paste still work |
 | WiFi has client isolation | Couldn't connect says nothing got through, either way, suggests a personal hotspot, and offers Try again. The internet address in each code is the way round if the router lets the traffic back in (§6) |
 | An iPhone browser other than Safari, not (yet) allowed onto the local network | iOS stops its checks to the other phone. The connect, reply and host-waiting screens say to tap Allow when iOS asks, Couldn't connect names the Settings switch, and the other phone's advice names the case too (§6) |
-| Chrome on Android 17 or newer, without the Nearby devices permission | Android stops its checks and the other phone's. Nothing asks for the permission. Couldn't connect leads with the Settings switch on that phone, and the other phone's advice names the case. Samsung Internet needs no permission so far (§6) |
+| Chrome on Android 17 or newer, without the Nearby devices permission (Edge and Brave too, by others' reports) | Android stops its checks and the other phone's. Nothing asks for the permission. Couldn't connect leads with the Settings switch on that phone, and the other phone's advice names the case. Samsung Internet needs no permission so far (§6) |
 | The browser has the game turned down for the local network (Chrome's site permission) | Chrome drops the other phone's WiFi addresses and no checks go out. The connect screens say so beforehand, a toast when it happens mid-handshake, and Couldn't connect says where to allow it (§6) |
 | An Android phone on a WiFi with no internet, with mobile data on | Android sends the game over mobile data. When this phone can see that (its only internet address came over mobile data), Couldn't connect says to turn mobile data off (§6) |
 | The two phones are on different networks | When both codes show local addresses that don't match, Couldn't connect says so (§6) |

@@ -181,18 +181,20 @@ export function localNetworkGate() {
  * mid-handshake the way iOS does, and a page can't see whether it is held.
  *
  * It is the browser's build that decides, not the phone, and a page can't
- * see that either. So this goes by what has been seen on phones: Chrome
- * needs the permission, and Samsung Internet connected without it on the
- * same evening (November 2026) — it isn't built for Android 17 yet, and has
- * no such switch to turn on. Other browsers aren't known either way, and get
- * the general advice. Returns 'Chrome' ('this app' for a chat app's own
+ * see that either. So this goes by what is known of each (November 2026).
+ * Chrome needs the permission: seen on a player's phone. Edge and Brave are
+ * reported to need it too, by others and not seen here, so their advice
+ * says what it means if the switch isn't there. Samsung Internet connected
+ * without it — it isn't built for Android 17 yet, and has no such switch to
+ * turn on. Firefox and the rest aren't known either way, and get the general
+ * advice. Returns the browser's name ('this app' for a chat app's own
  * browser), or null where the gate isn't known to apply: another browser, an
  * older Android, or one whose version isn't known.
  */
 export function nearbyDevicesGate() {
   if (!isAndroid() || (androidVersion() ?? 0) < 17) return null;
   if (inAppBrowser()) return 'this app';
-  return /^Chrome /.test(browserName(navigator.userAgent)) ? 'Chrome' : null;
+  return /^(Chrome|Edge|Brave) /.exec(browserName(navigator.userAgent))?.[1] || null;
 }
 
 /**
@@ -226,6 +228,9 @@ export function displayMode() {
 }
 
 function browserName(ua) {
+  // Brave's user agent is Chrome's to the letter; it gives itself away here.
+  const brave = navigator.brave && ua.match(/Chrome\/(\d+)/);
+  if (brave) return `Brave ${brave[1]}`;
   const known = [
     [/CriOS\/(\d+)/, 'Chrome'],
     [/FxiOS\/(\d+)/, 'Firefox'],
