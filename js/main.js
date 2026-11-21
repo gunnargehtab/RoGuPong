@@ -24,6 +24,7 @@ import * as league from './data/league.js';
 import * as cloud from './data/cloud.js';
 import {
   log, logLines, clock, day, device, isIOS, isAndroid, inAppBrowser, localNetworkGate, watchOtherCopies,
+  primeDevice, nearbyDevicesGate, localNetworkPermission,
 } from './diag.js';
 
 // Screens with no stage of their own, drawn over the turning menu stage; the
@@ -121,13 +122,23 @@ const WIFI_CONNECT_HINT = 'Both phones need to be on the same WiFi. Some guest n
   + 'from each other — a personal hotspot works around that. On an Android phone, turn mobile data '
   + 'off if the WiFi has no internet.';
 // The other phone can't tell what its friend runs until they connect, so this
-// one names the iPhone browsers that need letting onto the local network too.
-const NOTHING_THROUGH_HINT = 'Nothing got through between the phones, either way. An iPhone playing '
-  + 'in Chrome, or any browser but Safari, has to be allowed onto the local network first: '
-  + 'Settings → Privacy & Security → Local Network. Otherwise, if both phones are on the same WiFi '
-  + 'with the game on screen, the WiFi is keeping them apart, as guest and public networks often '
-  + 'do: turn on a personal hotspot on one phone, connect the other to it, and try again. On an '
-  + 'Android phone, also turn mobile data off if the WiFi has no internet.';
+// one names the phones that keep a browser off the local network too: Android
+// from 17 in Chrome, Edge or Brave, and an iPhone in any browser but Safari. One such phone is enough
+// for neither to hear the other.
+const NOTHING_THROUGH_HINT = 'Nothing got through between the phones, either way. Check both phones '
+  + 'first. On Android 17 or newer, Chrome — Edge or Brave too — has to be allowed to reach other '
+  + 'devices on the WiFi: Settings → Apps → the browser → Permissions → Nearby devices → Allow. On '
+  + 'an iPhone, Chrome or any browser but Safari has to be allowed onto the local network: '
+  + 'Settings → Privacy & Security → Local Network. If that is in order and both phones are on '
+  + 'the same WiFi with the game on screen, the WiFi is keeping them apart, as guest and public '
+  + 'networks often do: turn on a personal hotspot on one phone, connect the other to it, and try '
+  + 'again. On an Android phone, also turn mobile data off if the WiFi has no internet.';
+// Chrome itself has this site turned down for the local network: it drops the
+// other phone's WiFi addresses from the handshake without a word.
+const SITE_BLOCKED_HINT = 'This browser has the game blocked from the local network, so it can\'t '
+  + 'reach the other phone on the WiFi. Allow it and try again: tap the icon at the left of the '
+  + 'address bar → Permissions, or in Chrome ⋮ → Settings → Site settings → All sites → this site, '
+  + 'and turn on Local network access.';
 
 /**
  * Same WiFi and nothing through, on an iPhone in a browser other than Safari
@@ -148,6 +159,30 @@ function localNetworkHint(name) {
     + `on, and try again. Safari never needs this, so playing in Safari works too. If ${name} was `
     + 'allowed all along, the WiFi may be keeping the phones apart — a personal hotspot gets '
     + 'around that.';
+}
+
+/**
+ * Same WiFi and nothing through, in Chrome, Edge or Brave on Android 17 or
+ * newer (diag.js nearbyDevicesGate): Android keeps the browser off the WiFi's
+ * other devices until it holds the Nearby devices permission, and nothing
+ * asks for it mid-handshake. A page can't see whether it is held, nor
+ * whether this browser's build needs it at all — one that doesn't has no
+ * such switch — so the WiFi keeping the phones apart stays in as the other
+ * reading.
+ */
+function nearbyDevicesHint(name) {
+  if (name === 'this app') {
+    return 'This page opened inside another app, and Android 17 keeps an app away from the other '
+      + 'phone on the WiFi unless it is allowed to reach nearby devices. Open the game in your '
+      + 'browser — the app\'s ⋮ or share menu → Open in browser — and try again there. Chrome '
+      + 'needs allowing too: Settings → Apps → Chrome → Permissions → Nearby devices.';
+  }
+  return `Nothing got through between the phones, either way. From Android 17, ${name} has to be `
+    + `allowed to reach other devices on the WiFi, and it doesn't ask: Settings → Apps → ${name} → `
+    + 'Permissions → Nearby devices → Allow, then try again. Check the other phone\'s browser the '
+    + 'same way — one phone without it is enough to stop both. If '
+    + `${name} was allowed all along, or lists no Nearby devices to allow, the WiFi may be `
+    + 'keeping the phones apart — a personal hotspot gets around that.';
 }
 const MOBILE_DATA_HINT = 'This phone reaches the internet over mobile data, not over the WiFi it is '
   + 'on — which usually means the WiFi has no internet. Android then sends the game over mobile data '
@@ -338,6 +373,13 @@ class App {
     window.addEventListener('hashchange', () => this.consumeInviteLink());
 
     this.watchForDiagnostics();
+    // Turned down while a same-WiFi handshake is on: this phone's side can't
+    // come up now, and a guest would wait on its reply for good.
+    primeDevice((state) => {
+      if (state !== 'denied' || this.online || !this.peer || this.peer.connected) return;
+      this.screens.toast('The browser blocked the game from the local network — allow it in '
+        + 'this site\'s permissions, then try again', 'bad');
+    });
     this.keepStorage();
     addTouchIcon();
     // A match landing on this phone, by play, connect or import, queues it
@@ -1512,19 +1554,26 @@ class App {
    * What to try after a same-WiFi handshake that never connected, from what
    * it saw: this phone not on the WiFi, or on it but sending over mobile data
    * (Android only — an iPhone keeps traffic for the WiFi on the WiFi); the
-   * two phones on different networks; an iPhone browser that iOS keeps off
-   * the local network, whose own checks never leave; or nothing getting
-   * through at all. The general advice when it can't tell.
+   * two phones on different networks; a browser that has the game turned
+   * down for the local network; an iPhone browser that iOS keeps off the
+   * local network, whose own checks never leave; Chrome, Edge or Brave on
+   * Android 17, kept off it the same way; or nothing getting through at all.
+   * The general advice when it can't tell.
    */
   wifiConnectHint(p) {
     if (!p) return WIFI_CONNECT_HINT;
     const trouble = p.wifiTrouble();
     if (trouble === 'no-wifi') return NOT_ON_WIFI_HINT;
     if (trouble === 'mobile-data' && isAndroid()) return MOBILE_DATA_HINT;
-    if (p.sameNetwork() === false) return OTHER_NETWORK_HINT;
     const reach = p.reach();
+    // Ahead of the networks' own verdict: with the WiFi addresses dropped,
+    // whatever the two phones had in common never got tried.
+    if (localNetworkPermission() === 'denied' && reach !== 'both') return SITE_BLOCKED_HINT;
+    if (p.sameNetwork() === false) return OTHER_NETWORK_HINT;
     const gate = localNetworkGate();
     if (gate && (reach === 'none' || reach === 'theirs')) return localNetworkHint(gate);
+    const nearby = nearbyDevicesGate();
+    if (nearby && reach === 'none') return nearbyDevicesHint(nearby);
     if (reach === 'none') return NOTHING_THROUGH_HINT;
     return WIFI_CONNECT_HINT;
   }
@@ -1590,6 +1639,8 @@ class App {
     const zoom = window.visualViewport?.scale || 1;
     const session = navigator.audioSession?.type;
     const gate = localNetworkGate();
+    const nearby = nearbyDevicesGate();
+    const site = localNetworkPermission();
     const lines = [
       `RoGuPong diagnostics · ${day()} ${clock()}`,
       `build: protocol ${PROTOCOL}`,
@@ -1598,6 +1649,10 @@ class App {
       // Whether it is allowed is out of a page's reach; that it has to be isn't.
       ...(gate ? [`local network: ${gate} has to be allowed onto it (iOS Settings → Privacy & Security → `
         + 'Local Network), or no same-WiFi link comes up; a page can\'t see whether it is'] : []),
+      ...(nearby ? [`local network: ${nearby} has to be allowed onto it (Android Settings → Apps → `
+        + 'Permissions → Nearby devices), or no same-WiFi link comes up; a page can\'t see whether it is'] : []),
+      // Chrome's own permission for this site, which a page can see.
+      ...(site ? [`local network, this site in the browser: ${site === 'prompt' ? 'not asked yet' : site}`] : []),
       `screen: ${r.W}x${r.H} at ${window.devicePixelRatio || 1}x, canvas ${r.dpr}x · `
         + `safe area ${s.top}/${s.right}/${s.bottom}/${s.left} (top/right/bottom/left)`,
       `graphics: ${graphics}${why ? ` (${why})` : ''} · ${this.fps ? this.fps + ' fps' : 'fps not measured yet'}`,
